@@ -110,9 +110,11 @@ def clipScreenshot(img):
 	minPos = min(posses[0]) % TILESIZE, min(posses[1]) % TILESIZE
 	return img[minPos[0]:, minPos[1]:]
 def getBestMatch(img) -> str:
-	bestMatch = list(templates.keys())[0]
+	bestMatch = 'Free'
 	bestVal = 0.0
-	for name in templates.keys():
+	names = list(templates.keys())
+	names.remove('Free')
+	for name in names:
 		tile = templates[name]
 		assert tile.shape == (TILESIZE, TILESIZE, 3)
 		val = cv2.matchTemplate(img, tile, cv2.TM_CCOEFF_NORMED)
@@ -158,11 +160,6 @@ while True:
 	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 	img = drawDetectedLevel(tiles, targets)
-	print('WALL', sum([t.count(Tiles.WALL) for t in tiles]))
-	print('FREE', sum([t.count(Tiles.FREE) for t in tiles]))
-	print('ROCK', sum([t.count(Tiles.ROCK) for t in tiles]))
-	print('BULLDOZER', sum([t.count(Tiles.BULLDOZER) for t in tiles]))
-	print(targets)
 	
 	cv2.imshow('BulldozeBot', img)
 	if cv2.waitKey(20) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
