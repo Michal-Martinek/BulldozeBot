@@ -74,8 +74,10 @@ templates = {
 	'Rock': cv2.imread(os.path.join('Templates', 'Rock.png'), cv2.IMREAD_COLOR),
 	'RockOnTarget': cv2.imread(os.path.join('Templates', 'RockOnTarget.png'), cv2.IMREAD_COLOR),
 	'Target': cv2.imread(os.path.join('Templates', 'Target.png'), cv2.IMREAD_COLOR),
-	'Wall': cv2.imread(os.path.join('Templates', 'Wall.png'), cv2.IMREAD_COLOR),
+	'Wall':  cv2.imread(os.path.join('Templates', 'Wall.png' ), cv2.IMREAD_COLOR),
 	'Wall2': cv2.imread(os.path.join('Templates', 'Wall2.png'), cv2.IMREAD_COLOR),
+	'Wall3': cv2.imread(os.path.join('Templates', 'Wall3.png'), cv2.IMREAD_COLOR),
+	'Wall4': cv2.imread(os.path.join('Templates', 'Wall4.png'), cv2.IMREAD_COLOR),
 }
 # drawing -----------------------------------
 def blit(img, src, x_offset: int, y_offset: int):
@@ -83,6 +85,9 @@ def blit(img, src, x_offset: int, y_offset: int):
 def boxLocations(img, locs, templShape, color):
 	for y, x in zip(*locs):
 			cv2.rectangle(img, (x, y), (x + templShape[0], y + templShape[1]), color, 2, cv2.LINE_4)
+def drawGridlines(img):
+	img[0:img.shape[0]:TILESIZE] = (0, 0, 0)
+	img[:, 0:img.shape[1]:TILESIZE] = (0, 0, 0)
 def _getImg(tile, targets, pos):
 	tileName = {Tiles.FREE: 'Free',	Tiles.BULLDOZER: 'Bulldozer-up', Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
 	if pos in targets:
@@ -98,6 +103,12 @@ def drawDetectedLevel(tiles, targets):
 			blit(img, template, x * TILESIZE, y * TILESIZE)
 	return img
 # object detection --------------------------------------
+def clipScreenshot(img):
+	matched = cv2.matchTemplate(img, templates['Rock'], cv2.TM_CCOEFF_NORMED)
+	posses = np.where(matched > 0.90)
+	assert posses[0].shape[0] > 0
+	minPos = min(posses[0]) % TILESIZE, min(posses[1]) % TILESIZE
+	return img[minPos[0]:, minPos[1]:]
 def getBestMatch(img) -> str:
 	bestMatch = list(templates.keys())[0]
 	bestVal = 0.0
@@ -113,7 +124,7 @@ def getBestMatch(img) -> str:
 	return bestMatch
 def matchBlock(img) -> tuple[Tiles, bool]:
 	assert img.shape == (TILESIZE, TILESIZE, 3)
-	tiles = ['Free', 'Bulldozer-down', 'Bulldozer-left', 'Bulldozer-right', 'Bulldozer-up', 'Rock', 'RockOnTarget', 'Target', 'Wall', 'Wall2']
+	tiles = ['Free', 'Bulldozer-down', 'Bulldozer-left', 'Bulldozer-right', 'Bulldozer-up', 'Rock', 'RockOnTarget', 'Target', 'Wall', 'Wall2', 'Wall3', 'Wall4']
 	assert set(templates.keys()) == set(tiles)
 	matchName = getBestMatch(img)
 	matched = Tiles.FREE
@@ -121,7 +132,7 @@ def matchBlock(img) -> tuple[Tiles, bool]:
 		matched = Tiles.BULLDOZER
 	elif matchName in ['Rock', 'RockOnTarget']:
 		matched = Tiles.ROCK
-	elif matchName in ['Wall', 'Wall2']:
+	elif matchName in ['Wall', 'Wall2', 'Wall3', 'Wall4']:
 		matched = Tiles.WALL
 	return matched, matchName in ['RockOnTarget', 'Target']
 	
@@ -144,6 +155,7 @@ LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
 
 while True:
 	img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
+	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 	img = drawDetectedLevel(tiles, targets)
 	print('WALL', sum([t.count(Tiles.WALL) for t in tiles]))
