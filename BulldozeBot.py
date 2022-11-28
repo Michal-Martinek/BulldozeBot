@@ -199,20 +199,24 @@ def checkLevel(tiles, targets):
 
 
 # run
-hwnd = findBulldozerWindow()
-print(f'Found window {win32gui.GetWindowText(hwnd)}')
-LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
+def main():
+	hwnd = findBulldozerWindow()
+	print(f'Found window {win32gui.GetWindowText(hwnd)}')
+	LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
 
-while True:
-	img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
-	img = clipScreenshot(img)
-	tiles, targets = detectLevel(img)
-	tiles, targets = clipLevel(tiles, targets)
-	checkLevel(tiles, targets)
-	img = drawDetectedLevel(tiles, targets)
-	
-	cv2.imshow('BulldozeBot', img)
-	if cv2.waitKey(20) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-		break
+	while True:
+		img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
+		img = clipScreenshot(img)
+		tiles, targets = detectLevel(img)
+		tiles, targets = clipLevel(tiles, targets)
+		checkLevel(tiles, targets)
+		img = drawDetectedLevel(tiles, targets)
+		
+		cv2.imshow('BulldozeBot', img)
+		if cv2.waitKey(20) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
+			break
 
-cv2.destroyAllWindows()
+	cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+	main()

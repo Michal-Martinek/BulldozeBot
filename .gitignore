@@ -1,3 +1,5 @@
 window-captures
 __pycache__
 debug.bmp
+_timeFile.py
+_timingLog.txt
