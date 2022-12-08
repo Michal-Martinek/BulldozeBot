@@ -1,4 +1,5 @@
 from enum import IntEnum, auto
+from collections import deque
 
 class Tiles(IntEnum):
 	WALL = auto()
@@ -6,8 +7,18 @@ class Tiles(IntEnum):
 	ROCK = auto()
 	BULLDOZER = auto()
 
+class Moves: # 10 * (x off + 1) + (y off + 1)
+	UP = 10
+	DOWN = 12
+	RIGHT = 21
+	LEFT = 1
+
+Pos = list[int]
+Board = list[list[Tiles]]
+RockMove = tuple[Board, Pos, list[Moves]]
+
 # preprocessing ----------------------------------
-def clipLevel(tiles: list[list[Tiles]], targets: list[tuple[int]]) -> tuple[list[list[Tiles]], list[tuple[int]]]:
+def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
 	assert len(tiles) > 0 and len(tiles[0]) > 0
 	offsets = [0, 0]
 	wallRows = [all([t == Tiles.WALL for t in row]) for row in tiles]
@@ -43,7 +54,7 @@ def clipLevel(tiles: list[list[Tiles]], targets: list[tuple[int]]) -> tuple[list
 		if last > 1:
 			tiles = [row[:1-last] for row in tiles]
 	
-	return tiles, [(t[0] + offsets[1], t[1] + offsets[0]) for t in targets]
+	return _copyTiles(tiles), [[t[0] + offsets[1], t[1] + offsets[0]] for t in targets]
 def checkLevel(tiles, targets):
 	# targets on free or rocks
 	assert all([tiles[y][x] in [Tiles.FREE, Tiles.ROCK] for x, y in targets])
@@ -54,3 +65,52 @@ def checkLevel(tiles, targets):
 	assert len(targets) == sum([sum([t == Tiles.ROCK for t in row]) for row in tiles])
 	# one bulldozer
 	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
+def _copyTiles(tiles: Board):
+	return [[t for t in row] for row in tiles]
+
+# solving ---------------------------------------------
+def solveLevel(tiles: Board, targets: list[Pos]) -> list[Moves]:
+	tiles, targets = clipLevel(tiles, targets)
+	checkLevel(tiles, targets)
+	bulldozerPos = prepareLevel(tiles)
+	success, moves = solveRecursion(tiles, targets, bulldozerPos)
+	if not success:
+		raise RuntimeError('Couldn\'t find a solution')
+	return moves
+def solveRecursion(tiles, targets, bulldozerPos) -> tuple[bool, list[Moves]]:
+	for board, pos, moves in findPossibleRockMoves(tiles, bulldozerPos):
+		if levelComplete(board, targets):
+			return (True, moves)
+		success, postmoves = solveRecursion(board, targets, pos)
+		if success:
+			return (True, moves + postmoves)
+	return (False, [])			 
+
+def levelComplete(tiles: Board, targets: list[Pos]) -> bool:
+	for pos in targets:
+		if tiles[pos[1]][pos[0]] != Tiles.ROCK:
+			return False
+	return True
+def prepareLevel(tiles: Board):
+	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
+	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
+	return bulldozerPos
+def findPossibleRockMoves(tiles: Board, bulldozerPos: Pos) -> list[RockMove]:
+	closed: set[tuple[int, int]] = set((tuple(bulldozerPos), ))
+	opened: deque[tuple[Pos, list[Moves]]] = deque(((bulldozerPos, []), ))
+	rockMoves: list[RockMove] = []
+	while opened:
+		curr, moves = opened.popleft()
+		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
+			currPos = curr[0] + (move // 10) - 1, curr[1] + (move % 10) - 1
+			if tiles[currPos[1]][currPos[0]] == Tiles.ROCK:
+				newRockPos = [currPos[0] + (move // 10) - 1, currPos[1] + (move % 10) - 1]
+				if tiles[newRockPos[1]][newRockPos[0]] == Tiles.FREE:
+					newTiles = _copyTiles(tiles)
+					newTiles[newRockPos[1]][newRockPos[0]] = Tiles.ROCK
+					newTiles[currPos[1]][currPos[0]] = Tiles.FREE
+					rockMoves.append([newTiles, list(currPos), moves + [move]])
+			elif tiles[currPos[1]][currPos[0]] == Tiles.FREE and currPos not in closed:
+				opened.append((list(currPos), moves + [move]))
+				closed.add(currPos)
+	return rockMoves

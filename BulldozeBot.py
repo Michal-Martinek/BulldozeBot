@@ -4,7 +4,7 @@ import cv2
 import re, os
 
 import BotLogic
-from BotLogic import Tiles
+from BotLogic import Tiles, Moves
 
 # window capture ---------------------------------
 windowNames = {}
@@ -95,7 +95,7 @@ def drawDetectedLevel(tiles, targets):
 	img = np.zeros((len(tiles) * TILESIZE, len(tiles[0]) * TILESIZE, 3), dtype='uint8')
 	for y, col in enumerate(tiles):
 		for x, tile in enumerate(col):
-			template = _getImg(tile, targets, (x, y))
+			template = _getImg(tile, targets, [x, y])
 			blit(img, template, x * TILESIZE, y * TILESIZE)
 	return img
 # object detection --------------------------------------
@@ -134,7 +134,7 @@ def matchBlock(img) -> tuple[Tiles, bool]:
 		matched = Tiles.WALL
 	return matched, matchName in ['RockOnTarget', 'Target']
 	
-def detectLevel(img) -> tuple[list[list[Tiles]], list[tuple[int]]]:
+def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
 	width, height = img.shape[1] // TILESIZE, img.shape[0] // TILESIZE
 	tiles = [[Tiles.FREE for x in range(width)] for y in range(height)]
 	targets = []
@@ -143,7 +143,7 @@ def detectLevel(img) -> tuple[list[list[Tiles]], list[tuple[int]]]:
 			tile, target = matchBlock(img[y * TILESIZE : y * TILESIZE + TILESIZE, x * TILESIZE : x * TILESIZE + TILESIZE])
 			tiles[y][x] = tile
 			if target:
-				targets.append((x, y))
+				targets.append([x, y])
 	return tiles, targets
 
 # run
@@ -156,11 +156,15 @@ def main():
 		img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
 		img = clipScreenshot(img)
 		tiles, targets = detectLevel(img)
-		tiles, targets = BotLogic.clipLevel(tiles, targets)
-		BotLogic.checkLevel(tiles, targets)
+
 		img = drawDetectedLevel(tiles, targets)
-		
 		cv2.imshow('BulldozeBot', img)
+
+		moves = BotLogic.solveLevel(tiles, targets)
+		mmap = {Moves.UP: 'UP', Moves.DOWN: 'DOWN', Moves.RIGHT: 'RIGHT', Moves.LEFT: 'LEFT'}
+		[print(mmap[m], end=' ') for m in moves]
+		print()
+
 		if cv2.waitKey(20) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
 			break
 
