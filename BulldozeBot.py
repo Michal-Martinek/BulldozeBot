@@ -1,4 +1,5 @@
 import win32gui, win32ui, win32con
+import time
 import numpy as np
 import cv2
 import re, os
@@ -146,27 +147,30 @@ def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
 				targets.append([x, y])
 	return tiles, targets
 
+# executing moves ------------------------------------
+def executeMoves(moves: list[Moves], hwnd, duration=0.1):
+	mapp = {Moves.UP: 'W', Moves.DOWN: 'S', Moves.RIGHT: 'D', Moves.LEFT: 'A'}
+	for move in [ord(mapp[m]) for m in moves]:
+		win32gui.SendMessage(hwnd, win32con.WM_KEYDOWN, move, 0)
+		time.sleep(duration)
+		win32gui.SendMessage(hwnd, win32con.WM_KEYUP, move, 0)
+
 # run
 def main():
 	hwnd = findBulldozerWindow()
 	print(f'Found window {win32gui.GetWindowText(hwnd)}')
 	LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
 
-	while True:
-		img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
-		img = clipScreenshot(img)
-		tiles, targets = detectLevel(img)
+	
+	img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
+	img = clipScreenshot(img)
+	tiles, targets = detectLevel(img)
 
-		img = drawDetectedLevel(tiles, targets)
-		cv2.imshow('BulldozeBot', img)
+	img = drawDetectedLevel(tiles, targets)
+	cv2.imshow('BulldozeBot', img)
 
-		moves = BotLogic.solveLevel(tiles, targets)
-		mmap = {Moves.UP: 'UP', Moves.DOWN: 'DOWN', Moves.RIGHT: 'RIGHT', Moves.LEFT: 'LEFT'}
-		[print(mmap[m], end=' ') for m in moves]
-		print()
-
-		if cv2.waitKey(20) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-			break
+	moves = BotLogic.solveLevel(tiles, targets)
+	executeMoves(moves, hwnd)
 
 	cv2.destroyAllWindows()
 
