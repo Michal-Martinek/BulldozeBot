@@ -15,6 +15,7 @@ class Moves: # 10 * (x off + 1) + (y off + 1)
 
 Pos = list[int]
 Board = list[list[Tiles]]
+BoardState = tuple[tuple[tuple[int, int]], tuple[int, int]]
 RockMove = tuple[Board, Pos, list[Moves]]
 
 # preprocessing ----------------------------------
@@ -73,15 +74,18 @@ def solveLevel(tiles: Board, targets: list[Pos]) -> list[Moves]:
 	tiles, targets = clipLevel(tiles, targets)
 	checkLevel(tiles, targets)
 	bulldozerPos = prepareLevel(tiles)
-	success, moves = solveRecursion(tiles, targets, bulldozerPos)
+	closed = set((stateDesc(tiles, bulldozerPos), ))
+	success, moves = solveRecursion(tiles, targets, bulldozerPos, closed)
 	if not success:
 		raise RuntimeError('Couldn\'t find a solution')
 	return moves
-def solveRecursion(tiles, targets, bulldozerPos) -> tuple[bool, list[Moves]]:
+def solveRecursion(tiles, targets, bulldozerPos, closed: set[BoardState]) -> tuple[bool, list[Moves]]:
 	for board, pos, moves in findPossibleRockMoves(tiles, bulldozerPos):
 		if levelComplete(board, targets):
 			return (True, moves)
-		success, postmoves = solveRecursion(board, targets, pos)
+		if (desc := stateDesc(board, pos)) in closed: continue
+		closed.add(stateDesc(board, pos))
+		success, postmoves = solveRecursion(board, targets, pos, closed)
 		if success:
 			return (True, moves + postmoves)
 	return (False, [])			 
@@ -95,6 +99,24 @@ def prepareLevel(tiles: Board):
 	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
 	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
 	return bulldozerPos
+
+def stateDesc(tiles, bulldozerPos: Pos) -> BoardState:
+	toppest = len(tiles[0]), len(tiles)
+	closed = set((tuple(bulldozerPos), ))
+	opened = deque((bulldozerPos, ))
+	while opened:
+		curr = opened.popleft()
+		if curr[1] < toppest[1] or curr[1] == toppest[1] and curr[0] < toppest[0]:
+			toppest = tuple(curr)
+		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
+			new = curr[0] + (move // 10) - 1, curr[1] + (move % 10) - 1
+			if tiles[new[1]][new[0]] == Tiles.FREE and new not in closed:
+				opened.append(list(new))
+				closed.add(new)
+	assert toppest[0] < len(tiles[0]) and toppest[1] < len(tiles)
+	rocks = tuple(sum([[(x, y) for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
+	return rocks, toppest
+
 def findPossibleRockMoves(tiles: Board, bulldozerPos: Pos) -> list[RockMove]:
 	closed: set[tuple[int, int]] = set((tuple(bulldozerPos), ))
 	opened: deque[tuple[Pos, list[Moves]]] = deque(((bulldozerPos, []), ))
