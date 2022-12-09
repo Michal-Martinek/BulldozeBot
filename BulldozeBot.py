@@ -17,13 +17,18 @@ def findBulldozerWindow() -> int:
 	win32gui.EnumWindows(winEnumHandler, None)
 	bulldozerWindowName = 'Bulldozer - Level \\d+'
 	potentialWindowNames = [s for s in windowNames if re.match(bulldozerWindowName, s)]
-	if len(potentialWindowNames) >= 1:
-		name = potentialWindowNames[0]
-		return windowNames[name]
-	else:
+	if len(potentialWindowNames) > 1:
+		print('WARNING: Multiple Buldoze game windows found')
+	elif len(potentialWindowNames) == 0:
 		raise RuntimeError('Could not find Bulldozer game window, windows found: ', windowNames.keys())
+	hwnd = windowNames[potentialWindowNames[0]]
+	print(f'Found window {win32gui.GetWindowText(hwnd)}')
+	return hwnd
+	
 
-def getScreenshot(hwnd, W, H, cropped_x=8, cropped_y=30):
+def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
+		LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
+		W, H = RBX - LUX, RBY - LUY
 		# get the window image data
 		wDC = win32gui.GetWindowDC(hwnd)
 		dcObj = win32ui.CreateDCFromHandle(wDC)
@@ -158,11 +163,8 @@ def executeMoves(moves: list[Moves], hwnd, duration=0.1):
 # run
 def main():
 	hwnd = findBulldozerWindow()
-	print(f'Found window {win32gui.GetWindowText(hwnd)}')
-	LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
+	img = getScreenshot(hwnd)
 
-	
-	img = getScreenshot(hwnd, RBX - LUX, RBY - LUY)
 	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 
