@@ -20,7 +20,10 @@ def findBulldozerWindow() -> int:
 	if len(potentialWindowNames) > 1:
 		print('WARNING: Multiple Buldoze game windows found')
 	elif len(potentialWindowNames) == 0:
-		raise RuntimeError('Could not find Bulldozer game window, windows found: ', windowNames.keys())
+		sep = "', '"
+		print('ERROR: Could not find Bulldozer game window')
+		print(f"NOTE: windows found '{sep.join(windowNames.keys())}'")
+		exit(1)
 	hwnd = windowNames[potentialWindowNames[0]]
 	print(f'Found window {win32gui.GetWindowText(hwnd)}')
 	return hwnd
@@ -108,7 +111,7 @@ def drawDetectedLevel(tiles, targets):
 def clipScreenshot(img):
 	matched = cv2.matchTemplate(img, templates['Rock'], cv2.TM_CCOEFF_NORMED)
 	posses = np.where(matched > 0.90)
-	assert posses[0].shape[0] > 0
+	assert posses[0].shape[0] > 0, 'Could not find any rocks, the level is probably solved'
 	minPos = min(posses[0]) % TILESIZE, min(posses[1]) % TILESIZE
 	return img[minPos[0]:, minPos[1]:]
 def getBestMatch(img) -> str:
