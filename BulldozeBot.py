@@ -156,11 +156,12 @@ def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
 	return tiles, targets
 
 # executing moves ------------------------------------
-def executeMoves(moves: list[Moves], hwnd, duration=0.1):
+def executeMoves(moves: list[Moves], hwnd, duration=100):
 	mapp = {Moves.UP: 'W', Moves.DOWN: 'S', Moves.RIGHT: 'D', Moves.LEFT: 'A'}
 	for move in [ord(mapp[m]) for m in moves]:
-		win32gui.SendMessage(hwnd, win32con.WM_KEYDOWN, move, 0)
-		time.sleep(duration)
+		win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, move, 0)
+		if cv2.waitKey(duration) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
+			return
 		win32gui.SendMessage(hwnd, win32con.WM_KEYUP, move, 0)
 
 # run
