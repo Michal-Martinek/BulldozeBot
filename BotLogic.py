@@ -1,6 +1,8 @@
 from enum import IntEnum, auto
 from collections import deque
 
+import cv2, time
+
 class Tiles(IntEnum):
 	WALL = auto()
 	FREE = auto()
@@ -122,6 +124,7 @@ def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
 # solving ---------------------------------------------
+lastWindowWait = 0.0
 def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos, forbidden: list[list[bool]]) -> list[Moves]:
 	closed = set((stateDesc(tiles, bulldozerPos), ))
 	success, moves = solveRecursion(tiles, targets, bulldozerPos, forbidden, closed)
@@ -129,11 +132,17 @@ def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos, forbidden: l
 		raise RuntimeError('Couldn\'t find a solution')
 	return moves
 def solveRecursion(tiles, targets, bulldozerPos, forbidden: list[list[bool]], closed: set[BoardState]) -> tuple[bool, list[Moves]]:
+	global lastWindowWait
+	if (t := time.time()) - lastWindowWait > 0.1:
+		lastWindowWait = t
+		if cv2.waitKey(1) == 'q' or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
+			exit(0)
+			
 	for board, pos, moves in findPossibleRockMoves(tiles, bulldozerPos, forbidden):
 		if levelComplete(board, targets):
 			return (True, moves)
 		if (desc := stateDesc(board, pos)) in closed: continue
-		closed.add(stateDesc(board, pos))
+		closed.add(desc)
 		success, postmoves = solveRecursion(board, targets, pos, forbidden, closed)
 		if success:
 			return (True, moves + postmoves)
