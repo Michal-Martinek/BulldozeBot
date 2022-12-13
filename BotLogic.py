@@ -56,16 +56,23 @@ def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
 			tiles = [row[:1-last] for row in tiles]
 	
 	return _copyTiles(tiles), [[t[0] + offsets[1], t[1] + offsets[0]] for t in targets]
-def checkLevel(tiles, targets):
-	# targets on free or rocks
-	assert all([tiles[y][x] in [Tiles.FREE, Tiles.ROCK] for x, y in targets])
+def checkLevel(tiles, targets, bulldozerPos):
+	# one bulldozer
+	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
+
+	# as many rocks as targets
+	numRocks = sum([sum([t == Tiles.ROCK for t in row]) for row in tiles])
+	assert numRocks in [len(targets), len(targets) + 1]
+	if numRocks == len(targets) + 1:
+		targets.append(bulldozerPos)
+	
+	# targets not on walls
+	assert all([[tiles[y][x] != Tiles.WALL] for x, y in targets])
+	
 	# walls around level
 	assert all([tiles[0][x] == Tiles.WALL and tiles[-1][x] == Tiles.WALL for x in range(len(tiles[0]))])
 	assert all([tiles[y][0] == Tiles.WALL and tiles[y][-1] == Tiles.WALL for y in range(len(tiles))])
-	# as many rocks as targets
-	assert len(targets) == sum([sum([t == Tiles.ROCK for t in row]) for row in tiles])
-	# one bulldozer
-	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
+
 def _identifyCorners(tiles, targets) -> list[list[bool]]:
 	forbidden = [[False for x in range(len(tiles[0]))] for y in range(len(tiles))]
 	for x in range(1, len(tiles[0])-1):
@@ -86,9 +93,7 @@ def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
 # solving ---------------------------------------------
-def solveLevel(tiles: Board, targets: list[Pos]) -> list[Moves]:
-	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
-	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
+def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos) -> list[Moves]:
 	closed = set((stateDesc(tiles, bulldozerPos), ))
 	success, moves = solveRecursion(tiles, targets, bulldozerPos, closed)
 	if not success:
@@ -110,10 +115,13 @@ def levelComplete(tiles: Board, targets: list[Pos]) -> bool:
 		if tiles[pos[1]][pos[0]] != Tiles.ROCK:
 			return False
 	return True
-def prepareLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos], list[list[bool]]]:
+def prepareLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos], Pos, list[list[bool]]]:
 	tiles, targets = clipLevel(tiles, targets)
-	checkLevel(tiles, targets)
-	return tiles, targets, getForbiddenTiles(tiles, targets)
+	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
+	checkLevel(tiles, targets, bulldozerPos)
+	
+	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
+	return tiles, targets, bulldozerPos, getForbiddenTiles(tiles, targets)
 
 def stateDesc(tiles, bulldozerPos: Pos) -> BoardState:
 	toppest = len(tiles[0]), len(tiles)
