@@ -75,10 +75,13 @@ def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
 TILESIZE = 32
 templates = {
 	'Free': cv2.imread(os.path.join('Templates', 'Free.png'), cv2.IMREAD_COLOR),
+	'Free-forbidden': cv2.imread(os.path.join('Templates', 'Free-forbidden.png'), cv2.IMREAD_COLOR),
 	'Bulldozer-down': cv2.imread(os.path.join('Templates', 'Bulldozer-down.png'), cv2.IMREAD_COLOR),
 	'Bulldozer-left': cv2.imread(os.path.join('Templates', 'Bulldozer-left.png'), cv2.IMREAD_COLOR),
 	'Bulldozer-right': cv2.imread(os.path.join('Templates', 'Bulldozer-right.png'), cv2.IMREAD_COLOR),
 	'Bulldozer-up': cv2.imread(os.path.join('Templates', 'Bulldozer-up.png'), cv2.IMREAD_COLOR),
+	'Bulldozer-forbidden': cv2.imread(os.path.join('Templates', 'Bulldozer-forbidden.png'), cv2.IMREAD_COLOR),
+	'Bulldozer-target': cv2.imread(os.path.join('Templates', 'Bulldozer-target.png'), cv2.IMREAD_COLOR),
 	'Rock': cv2.imread(os.path.join('Templates', 'Rock.png'), cv2.IMREAD_COLOR),
 	'RockOnTarget': cv2.imread(os.path.join('Templates', 'RockOnTarget.png'), cv2.IMREAD_COLOR),
 	'Target': cv2.imread(os.path.join('Templates', 'Target.png'), cv2.IMREAD_COLOR),
@@ -101,22 +104,23 @@ def boxLocations(img, locs, templShape, color):
 def drawGridlines(img):
 	img[0:img.shape[0]:TILESIZE] = (0, 0, 0)
 	img[:, 0:img.shape[1]:TILESIZE] = (0, 0, 0)
-def _getImg(tile, targets, pos):
-	tileName = {Tiles.FREE: 'Free',	Tiles.BULLDOZER: 'Bulldozer-up', Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
+def _getImg(tile, targets, pos, forbidden):
+	tileName = {Tiles.FREE: ['Free', 'Free-forbidden'][forbidden],	Tiles.BULLDOZER: ['Bulldozer-up', 'Bulldozer-forbidden'][forbidden], Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
 	if pos in targets:
-		if tile == Tiles.ROCK:
+		if tile == Tiles.BULLDOZER:
+			tileName = 'Bulldozer-target'
+		elif tile == Tiles.ROCK:
 			tileName = 'RockOnTarget'
 		else: tileName = 'Target'
 	return templates[tileName]
-def drawDetectedLevel(tiles, targets, forbidden):
+def drawDetectedLevel(tiles, targets, bulldozerPos, forbidden):
 	img = np.zeros((len(tiles) * TILESIZE, len(tiles[0]) * TILESIZE, 3), dtype='uint8')
 	for y, col in enumerate(tiles):
 		for x, tile in enumerate(col):
-			template = _getImg(tile, targets, [x, y])
+			if [x, y] == bulldozerPos:
+				tile = Tiles.BULLDOZER
+			template = _getImg(tile, targets, [x, y], forbidden[y][x])
 			blit(img, template, x * TILESIZE, y * TILESIZE)
-			if forbidden[y][x]:
-				drawHollowRect(img, (0, 0, 255), x*TILESIZE, y*TILESIZE, TILESIZE, TILESIZE)
-
 	return img
 # object detection --------------------------------------
 def clipScreenshot(img):
@@ -128,8 +132,7 @@ def clipScreenshot(img):
 def getBestMatch(img) -> str:
 	bestMatch = 'Free'
 	bestVal = 0.0
-	names = list(templates.keys())
-	names.remove('Free')
+	names = ['Bulldozer-down', 'Bulldozer-left', 'Bulldozer-right', 'Bulldozer-up', 'Rock', 'RockOnTarget', 'Target', 'Wall', 'Wall2', 'Wall3', 'Wall4']
 	for name in names:
 		tile = templates[name]
 		assert tile.shape == (TILESIZE, TILESIZE, 3)
@@ -142,8 +145,6 @@ def getBestMatch(img) -> str:
 	return bestMatch
 def matchBlock(img) -> tuple[Tiles, bool]:
 	assert img.shape == (TILESIZE, TILESIZE, 3)
-	tiles = ['Free', 'Bulldozer-down', 'Bulldozer-left', 'Bulldozer-right', 'Bulldozer-up', 'Rock', 'RockOnTarget', 'Target', 'Wall', 'Wall2', 'Wall3', 'Wall4']
-	assert set(templates.keys()) == set(tiles)
 	matchName = getBestMatch(img)
 	matched = Tiles.FREE
 	if matchName in ['Bulldozer-down', 'Bulldozer-left', 'Bulldozer-right', 'Bulldozer-up']:
@@ -183,13 +184,13 @@ def main():
 	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 
-	tiles, targets, forbidden = BotLogic.prepareLevel(tiles, targets)
+	tiles, targets, bulldozerPos, forbidden = BotLogic.prepareLevel(tiles, targets)
 
-	img = drawDetectedLevel(tiles, targets, forbidden)
+	img = drawDetectedLevel(tiles, targets, bulldozerPos, forbidden)
 	cv2.imshow('BulldozeBot', img)
 	cv2.waitKey(1)
 	
-	moves = BotLogic.solveLevel(tiles, targets)
+	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos)
 	executeMoves(moves, hwnd)
 
 	cv2.destroyAllWindows()
