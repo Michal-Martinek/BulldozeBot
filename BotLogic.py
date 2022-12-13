@@ -71,7 +71,6 @@ def _copyTiles(tiles: Board):
 
 # solving ---------------------------------------------
 def solveLevel(tiles: Board, targets: list[Pos]) -> list[Moves]:
-	tiles, targets = clipLevel(tiles, targets)
 	checkLevel(tiles, targets)
 	bulldozerPos = prepareLevel(tiles)
 	closed = set((stateDesc(tiles, bulldozerPos), ))

@@ -30,6 +30,10 @@ def findBulldozerWindow() -> int:
 	
 
 def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
+		# maximize the window
+		win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+		cv2.waitKey(1)
+
 		LUX, LUY, RBX, RBY = win32gui.GetWindowRect(hwnd)
 		W, H = RBX - LUX, RBY - LUY
 		# get the window image data
@@ -45,7 +49,6 @@ def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
 		# dataBitMap.SaveBitmapFile(cDC, 'debug.bmp')
 		signedIntsArray = dataBitMap.GetBitmapBits(True)
 		img = np.frombuffer(signedIntsArray, dtype='uint8')
-		# img = np.fromstring(signedIntsArray, dtype='uint8')
 		img.shape = (H, W, 4)
 
 		# free resources
@@ -153,7 +156,7 @@ def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
 			tiles[y][x] = tile
 			if target:
 				targets.append([x, y])
-	return tiles, targets
+	return BotLogic.clipLevel(tiles, targets)
 
 # executing moves ------------------------------------
 def executeMoves(moves: list[Moves], hwnd, duration=100):
@@ -174,7 +177,8 @@ def main():
 
 	img = drawDetectedLevel(tiles, targets)
 	cv2.imshow('BulldozeBot', img)
-
+	cv2.waitKey(1)
+	
 	moves = BotLogic.solveLevel(tiles, targets)
 	executeMoves(moves, hwnd)
 
