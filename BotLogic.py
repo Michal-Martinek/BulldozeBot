@@ -86,26 +86,55 @@ def _identifyCorners(tiles, targets) -> list[list[bool]]:
 			if [x, y] not in targets and isCorner and tiles[y][x] == Tiles.FREE:
 				forbidden[y][x] = True
 	return forbidden
+def _extendWall(tiles, targets, x, y, forbidden):
+	changed = False
+	savedX, savedY = x, y
+	for xOff, yOff in [(0, 1), (1, 0)]:
+		x, y = savedX, savedY
+		if tiles[y+yOff][x+xOff] != Tiles.FREE:
+			continue
+		foundTiles = []
+		x += xOff
+		y += yOff
+		wallSide = (tiles[y+xOff][x+yOff] == Tiles.WALL) * 2 - 1 # 1 if the wall side is DOWN or RIGHT, -1 otherwise
+		while [x, y] not in targets and not forbidden[y][x] and tiles[y + xOff * wallSide][x + yOff * wallSide] == Tiles.WALL:
+			foundTiles.append([x, y])
+			x += xOff
+			y += yOff
+		if forbidden[y][x]:
+			for tx, ty in foundTiles:
+				changed = changed or not forbidden[ty][tx]
+				forbidden[ty][tx] = True
+	return changed
 def getForbiddenTiles(tiles, targets) -> list[list[bool]]:
 	forbidden = _identifyCorners(tiles, targets)
+	corners = _copyTiles(forbidden)
+
+	changed = True
+	while changed:
+		changed = False
+		for x in range(1, len(tiles[0])-1):
+			for y in range(1, len(tiles)-1):
+				if corners[y][x]:
+					changed = changed or _extendWall(tiles, targets, x, y, forbidden)
 	return forbidden
 def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
 # solving ---------------------------------------------
-def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos) -> list[Moves]:
+def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos, forbidden: list[list[bool]]) -> list[Moves]:
 	closed = set((stateDesc(tiles, bulldozerPos), ))
-	success, moves = solveRecursion(tiles, targets, bulldozerPos, closed)
+	success, moves = solveRecursion(tiles, targets, bulldozerPos, forbidden, closed)
 	if not success:
 		raise RuntimeError('Couldn\'t find a solution')
 	return moves
-def solveRecursion(tiles, targets, bulldozerPos, closed: set[BoardState]) -> tuple[bool, list[Moves]]:
-	for board, pos, moves in findPossibleRockMoves(tiles, bulldozerPos):
+def solveRecursion(tiles, targets, bulldozerPos, forbidden: list[list[bool]], closed: set[BoardState]) -> tuple[bool, list[Moves]]:
+	for board, pos, moves in findPossibleRockMoves(tiles, bulldozerPos, forbidden):
 		if levelComplete(board, targets):
 			return (True, moves)
 		if (desc := stateDesc(board, pos)) in closed: continue
 		closed.add(stateDesc(board, pos))
-		success, postmoves = solveRecursion(board, targets, pos, closed)
+		success, postmoves = solveRecursion(board, targets, pos, forbidden, closed)
 		if success:
 			return (True, moves + postmoves)
 	return (False, [])			 
@@ -140,7 +169,7 @@ def stateDesc(tiles, bulldozerPos: Pos) -> BoardState:
 	rocks = tuple(sum([[(x, y) for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
 	return rocks, toppest
 
-def findPossibleRockMoves(tiles: Board, bulldozerPos: Pos) -> list[RockMove]:
+def findPossibleRockMoves(tiles: Board, bulldozerPos: Pos, forbidden: list[list[bool]]) -> list[RockMove]:
 	closed: set[tuple[int, int]] = set((tuple(bulldozerPos), ))
 	opened: deque[tuple[Pos, list[Moves]]] = deque(((bulldozerPos, []), ))
 	rockMoves: list[RockMove] = []
@@ -150,7 +179,7 @@ def findPossibleRockMoves(tiles: Board, bulldozerPos: Pos) -> list[RockMove]:
 			currPos = curr[0] + (move // 10) - 1, curr[1] + (move % 10) - 1
 			if tiles[currPos[1]][currPos[0]] == Tiles.ROCK:
 				newRockPos = [currPos[0] + (move // 10) - 1, currPos[1] + (move % 10) - 1]
-				if tiles[newRockPos[1]][newRockPos[0]] == Tiles.FREE:
+				if tiles[newRockPos[1]][newRockPos[0]] == Tiles.FREE and not forbidden[newRockPos[1]][newRockPos[0]]:
 					newTiles = _copyTiles(tiles)
 					newTiles[newRockPos[1]][newRockPos[0]] = Tiles.ROCK
 					newTiles[currPos[1]][currPos[0]] = Tiles.FREE

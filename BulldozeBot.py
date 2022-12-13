@@ -190,7 +190,7 @@ def main():
 	cv2.imshow('BulldozeBot', img)
 	cv2.waitKey(1)
 	
-	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos)
+	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos, forbidden)
 	executeMoves(moves, hwnd)
 
 	cv2.destroyAllWindows()
