@@ -66,13 +66,29 @@ def checkLevel(tiles, targets):
 	assert len(targets) == sum([sum([t == Tiles.ROCK for t in row]) for row in tiles])
 	# one bulldozer
 	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
+def _identifyCorners(tiles, targets) -> list[list[bool]]:
+	forbidden = [[False for x in range(len(tiles[0]))] for y in range(len(tiles))]
+	for x in range(1, len(tiles[0])-1):
+		for y in range(1, len(tiles)-1):
+			walls = []
+			for i, move in enumerate([Moves.UP, Moves.RIGHT, Moves.DOWN, Moves.LEFT]):
+				pos = x + (move // 10) - 1, y + (move % 10) - 1
+				if tiles[pos[1]][pos[0]] == Tiles.WALL:
+					walls.append(i)
+			isCorner = any([(i in walls) and ((i+1)%4 in walls) for i in range(4)])
+			if [x, y] not in targets and isCorner and tiles[y][x] == Tiles.FREE:
+				forbidden[y][x] = True
+	return forbidden
+def getForbiddenTiles(tiles, targets) -> list[list[bool]]:
+	forbidden = _identifyCorners(tiles, targets)
+	return forbidden
 def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
 # solving ---------------------------------------------
 def solveLevel(tiles: Board, targets: list[Pos]) -> list[Moves]:
-	checkLevel(tiles, targets)
-	bulldozerPos = prepareLevel(tiles)
+	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
+	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
 	closed = set((stateDesc(tiles, bulldozerPos), ))
 	success, moves = solveRecursion(tiles, targets, bulldozerPos, closed)
 	if not success:
@@ -94,10 +110,10 @@ def levelComplete(tiles: Board, targets: list[Pos]) -> bool:
 		if tiles[pos[1]][pos[0]] != Tiles.ROCK:
 			return False
 	return True
-def prepareLevel(tiles: Board):
-	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
-	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
-	return bulldozerPos
+def prepareLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos], list[list[bool]]]:
+	tiles, targets = clipLevel(tiles, targets)
+	checkLevel(tiles, targets)
+	return tiles, targets, getForbiddenTiles(tiles, targets)
 
 def stateDesc(tiles, bulldozerPos: Pos) -> BoardState:
 	toppest = len(tiles[0]), len(tiles)

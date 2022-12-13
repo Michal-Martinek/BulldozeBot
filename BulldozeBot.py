@@ -90,6 +90,11 @@ templates = {
 # drawing -----------------------------------
 def blit(img, src, x_offset: int, y_offset: int):
 	img[y_offset:y_offset+src.shape[0], x_offset:x_offset+src.shape[1]] = src
+def drawHollowRect(img, color, x, y, w, h, thickness=2):
+	img[y:y+thickness, x:x+w] = color
+	img[y+h-thickness:y+h, x:x+w] = color
+	img[y:y+h, x:x+thickness] = color
+	img[y:y+h, x+w-thickness:x+w] = color
 def boxLocations(img, locs, templShape, color):
 	for y, x in zip(*locs):
 			cv2.rectangle(img, (x, y), (x + templShape[0], y + templShape[1]), color, 2, cv2.LINE_4)
@@ -103,12 +108,15 @@ def _getImg(tile, targets, pos):
 			tileName = 'RockOnTarget'
 		else: tileName = 'Target'
 	return templates[tileName]
-def drawDetectedLevel(tiles, targets):
+def drawDetectedLevel(tiles, targets, forbidden):
 	img = np.zeros((len(tiles) * TILESIZE, len(tiles[0]) * TILESIZE, 3), dtype='uint8')
 	for y, col in enumerate(tiles):
 		for x, tile in enumerate(col):
 			template = _getImg(tile, targets, [x, y])
 			blit(img, template, x * TILESIZE, y * TILESIZE)
+			if forbidden[y][x]:
+				drawHollowRect(img, (0, 0, 255), x*TILESIZE, y*TILESIZE, TILESIZE, TILESIZE)
+
 	return img
 # object detection --------------------------------------
 def clipScreenshot(img):
@@ -156,7 +164,7 @@ def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
 			tiles[y][x] = tile
 			if target:
 				targets.append([x, y])
-	return BotLogic.clipLevel(tiles, targets)
+	return tiles, targets
 
 # executing moves ------------------------------------
 def executeMoves(moves: list[Moves], hwnd, duration=100):
@@ -175,7 +183,9 @@ def main():
 	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 
-	img = drawDetectedLevel(tiles, targets)
+	tiles, targets, forbidden = BotLogic.prepareLevel(tiles, targets)
+
+	img = drawDetectedLevel(tiles, targets, forbidden)
 	cv2.imshow('BulldozeBot', img)
 	cv2.waitKey(1)
 	
