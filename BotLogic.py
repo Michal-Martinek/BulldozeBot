@@ -89,36 +89,29 @@ def _identifyCorners(tiles, targets) -> list[list[bool]]:
 				forbidden[y][x] = True
 	return forbidden
 def _extendWall(tiles, targets, x, y, forbidden):
-	changed = False
 	savedX, savedY = x, y
 	for xOff, yOff in [(0, 1), (1, 0)]:
 		x, y = savedX, savedY
-		if tiles[y+yOff][x+xOff] != Tiles.FREE:
-			continue
 		foundTiles = []
-		x += xOff
-		y += yOff
-		wallSide = (tiles[y+xOff][x+yOff] == Tiles.WALL) * 2 - 1 # 1 if the wall side is DOWN or RIGHT, -1 otherwise
-		while [x, y] not in targets and not forbidden[y][x] and tiles[y + xOff * wallSide][x + yOff * wallSide] == Tiles.WALL:
+		started = True
+		wallTop, wallBottom = True, True
+		while tiles[y][x] != Tiles.WALL and [x, y] not in targets and (not forbidden[y][x] or started) and (wallTop or wallBottom):
+			wallTop = wallTop and tiles[y-xOff][x-yOff] == Tiles.WALL
+			wallBottom = wallBottom and tiles[y+xOff][x+yOff] == Tiles.WALL
 			foundTiles.append([x, y])
 			x += xOff
 			y += yOff
-		if forbidden[y][x]:
+			started = False
+		if forbidden[y][x] and (wallTop or wallBottom):
 			for tx, ty in foundTiles:
-				changed = changed or not forbidden[ty][tx]
 				forbidden[ty][tx] = True
-	return changed
 def getForbiddenTiles(tiles, targets) -> list[list[bool]]:
 	forbidden = _identifyCorners(tiles, targets)
 	corners = _copyTiles(forbidden)
-
-	changed = True
-	while changed:
-		changed = False
-		for x in range(1, len(tiles[0])-1):
-			for y in range(1, len(tiles)-1):
-				if corners[y][x]:
-					changed = changed or _extendWall(tiles, targets, x, y, forbidden)
+	for x in range(1, len(tiles[0])-1):
+		for y in range(1, len(tiles)-1):
+			if corners[y][x]:
+				_extendWall(tiles, targets, x, y, forbidden)
 	return forbidden
 def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
