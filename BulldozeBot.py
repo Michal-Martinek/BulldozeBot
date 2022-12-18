@@ -191,6 +191,7 @@ def main():
 	cv2.waitKey(1)
 	
 	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos, forbidden)
+	print(f'INFO: found a solution with {len(moves)} moves')
 	executeMoves(moves, hwnd)
 
 	cv2.destroyAllWindows()

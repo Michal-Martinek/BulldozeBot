@@ -1,6 +1,7 @@
 from enum import IntEnum, auto
 from collections import deque
-
+import heapq
+from dataclasses import dataclass
 import cv2, time
 
 class Tiles(IntEnum):
@@ -14,6 +15,12 @@ class Moves: # 10 * (x off + 1) + (y off + 1)
 	DOWN = 12
 	RIGHT = 21
 	LEFT = 1
+
+@ dataclass
+class State:
+	rocks: list[tuple[int, int]]
+	bulldozerPos: tuple[int, int]
+	moves: list[Moves]
 
 Pos = list[int]
 Board = list[list[Tiles]]
