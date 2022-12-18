@@ -113,12 +113,14 @@ def _getImg(tile, targets, pos, forbidden):
 			tileName = 'RockOnTarget'
 		else: tileName = 'Target'
 	return templates[tileName]
-def drawDetectedLevel(tiles, targets, bulldozerPos, forbidden):
+def drawDetectedLevel(tiles, targets, bulldozerPos, rocks, forbidden):
 	img = np.zeros((len(tiles) * TILESIZE, len(tiles[0]) * TILESIZE, 3), dtype='uint8')
 	for y, col in enumerate(tiles):
 		for x, tile in enumerate(col):
 			if [x, y] == bulldozerPos:
 				tile = Tiles.BULLDOZER
+			if [x, y] in rocks:
+				tile = Tiles.ROCK
 			template = _getImg(tile, targets, [x, y], forbidden[y][x])
 			blit(img, template, x * TILESIZE, y * TILESIZE)
 	return img
@@ -184,13 +186,13 @@ def main():
 	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 
-	tiles, targets, bulldozerPos, forbidden = BotLogic.prepareLevel(tiles, targets)
+	tiles, targets, bulldozerPos, rocks, forbidden = BotLogic.prepareLevel(tiles, targets)
 
-	img = drawDetectedLevel(tiles, targets, bulldozerPos, forbidden)
+	img = drawDetectedLevel(tiles, targets, bulldozerPos, rocks, forbidden)
 	cv2.imshow('BulldozeBot', img)
 	cv2.waitKey(1)
 	
-	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos, forbidden)
+	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos, rocks, forbidden)
 	print(f'INFO: found a solution with {len(moves)} moves')
 	executeMoves(moves, hwnd)
 

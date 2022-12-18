@@ -4,6 +4,7 @@ import heapq
 from dataclasses import dataclass
 import cv2, time
 
+Pos = list[int]
 class Tiles(IntEnum):
 	WALL = auto()
 	FREE = auto()
@@ -18,13 +19,11 @@ class Moves: # 10 * (x off + 1) + (y off + 1)
 
 @ dataclass
 class State:
-	rocks: list[tuple[int, int]]
-	bulldozerPos: tuple[int, int]
+	rocks: list[Pos]
+	bulldozerPos: Pos
 	moves: list[Moves]
 
-Pos = list[int]
 Board = list[list[Tiles]]
-BoardState = tuple[tuple[tuple[int, int]], tuple[int, int]]
 RockMove = tuple[Board, Pos, list[Moves]]
 
 # preprocessing ----------------------------------
@@ -65,7 +64,8 @@ def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
 			tiles = [row[:1-last] for row in tiles]
 	
 	return _copyTiles(tiles), [[t[0] + offsets[1], t[1] + offsets[0]] for t in targets]
-def checkLevel(tiles, targets, bulldozerPos):
+def checkLevel(tiles, targets, bulldozerPos, rocks):
+	assert False
 	# one bulldozer
 	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
 
@@ -96,6 +96,7 @@ def _identifyCorners(tiles, targets) -> list[list[bool]]:
 				forbidden[y][x] = True
 	return forbidden
 def _extendWall(tiles, targets, x, y, forbidden):
+	assert False
 	savedX, savedY = x, y
 	for xOff, yOff in [(0, 1), (1, 0)]:
 		x, y = savedX, savedY
@@ -125,13 +126,14 @@ def _copyTiles(tiles: Board):
 
 # solving ---------------------------------------------
 lastWindowWait = 0.0
-def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos, forbidden: list[list[bool]]) -> list[Moves]:
-	closed = set((stateDesc(tiles, bulldozerPos), ))
+def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos, rocks: list[Pos], forbidden: list[list[bool]]) -> list[Moves]:
+	startState = State(rocks, bulldozerPos, [])
+	closed = set((startState, ))
 	success, moves = solveRecursion(tiles, targets, bulldozerPos, forbidden, closed)
 	if not success:
 		raise RuntimeError('Couldn\'t find a solution')
 	return moves
-def solveRecursion(tiles, targets, bulldozerPos, forbidden: list[list[bool]], closed: set[BoardState]) -> tuple[bool, list[Moves]]:
+def solveRecursion(tiles, targets, bulldozerPos, forbidden: list[list[bool]], closed: set) -> tuple[bool, list[Moves]]:
 	global lastWindowWait
 	if (t := time.time()) - lastWindowWait > 0.1:
 		lastWindowWait = t
@@ -153,15 +155,20 @@ def levelComplete(tiles: Board, targets: list[Pos]) -> bool:
 		if tiles[pos[1]][pos[0]] != Tiles.ROCK:
 			return False
 	return True
-def prepareLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos], Pos, list[list[bool]]]:
+def prepareLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos], Pos, list[Pos], list[list[bool]]]:
 	tiles, targets = clipLevel(tiles, targets)
 	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
+	rocks = tuple(sum([[[x, y] for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
+	
 	checkLevel(tiles, targets, bulldozerPos)
 	
 	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
-	return tiles, targets, bulldozerPos, getForbiddenTiles(tiles, targets)
+	forbidden = getForbiddenTiles(tiles, targets)
+	for rX, rY in rocks:
+		tiles[rY][rX] = Tiles.FREE
+	return tiles, targets, bulldozerPos, rocks, forbidden
 
-def stateDesc(tiles, bulldozerPos: Pos) -> BoardState:
+def stateDesc(tiles, bulldozerPos: Pos):
 	toppest = len(tiles[0]), len(tiles)
 	closed = set((tuple(bulldozerPos), ))
 	opened = deque((bulldozerPos, ))
