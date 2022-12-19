@@ -1,11 +1,10 @@
 import win32gui, win32ui, win32con
-import time
 import numpy as np
 import cv2
 import re, os
 
 import BotLogic
-from BotLogic import Tiles, Moves
+from BotLogic import Tiles, Moves, State
 
 # window capture ---------------------------------
 windowNames = {}
@@ -113,15 +112,15 @@ def _getImg(tile, targets, pos, forbidden):
 			tileName = 'RockOnTarget'
 		else: tileName = 'Target'
 	return templates[tileName]
-def drawDetectedLevel(tiles, targets, bulldozerPos, rocks, forbidden):
-	img = np.zeros((len(tiles) * TILESIZE, len(tiles[0]) * TILESIZE, 3), dtype='uint8')
-	for y, col in enumerate(tiles):
+def drawDetectedLevel(state: State):
+	img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
+	for y, col in enumerate(state.tiles):
 		for x, tile in enumerate(col):
-			if [x, y] == bulldozerPos:
+			if [x, y] == state.bulldozerPos:
 				tile = Tiles.BULLDOZER
-			if [x, y] in rocks:
+			if [x, y] in state.rocks:
 				tile = Tiles.ROCK
-			template = _getImg(tile, targets, [x, y], forbidden[y][x])
+			template = _getImg(tile, state.targets, [x, y], state.forbidden[y][x])
 			blit(img, template, x * TILESIZE, y * TILESIZE)
 	return img
 # object detection --------------------------------------
@@ -186,13 +185,13 @@ def main():
 	img = clipScreenshot(img)
 	tiles, targets = detectLevel(img)
 
-	tiles, targets, bulldozerPos, rocks, forbidden = BotLogic.prepareLevel(tiles, targets)
+	state = BotLogic.prepareLevel(tiles, targets)
 
-	img = drawDetectedLevel(tiles, targets, bulldozerPos, rocks, forbidden)
+	img = drawDetectedLevel(state)
 	cv2.imshow('BulldozeBot', img)
 	cv2.waitKey(1)
 	
-	moves = BotLogic.solveLevel(tiles, targets, bulldozerPos, rocks, forbidden)
+	moves = BotLogic.solveLevel(state)
 	print(f'INFO: found a solution with {len(moves)} moves')
 	executeMoves(moves, hwnd)
 

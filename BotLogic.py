@@ -4,7 +4,6 @@ import heapq
 from dataclasses import dataclass
 import cv2, time
 
-Pos = list[int]
 class Tiles(IntEnum):
 	WALL = auto()
 	FREE = auto()
@@ -17,14 +16,49 @@ class Moves: # 10 * (x off + 1) + (y off + 1)
 	RIGHT = 21
 	LEFT = 1
 
+Pos = list[int]
+Board = list[list[Tiles]]
+
 @ dataclass
 class State:
+	# TODO: rocks and targets should be a set()
 	rocks: list[Pos]
 	bulldozerPos: Pos
 	moves: list[Moves]
+	tiles: list[list[Tiles]]
+	targets: list[Pos]
+	forbidden: list[list[bool]]
 
-Board = list[list[Tiles]]
-RockMove = tuple[Board, Pos, list[Moves]]
+	def levelWon(self):
+		return all([t in self.rocks for t in self.targets])
+	def movedBulldozer(self, move: Moves):
+		return State(self.rocks.copy(), self.movedPos(move), self.moves + [move], self.tiles, self.targets, self.forbidden)
+	def movedPos(self, move: Moves) -> Pos:
+		return [self.bulldozerPos[0] + (move // 10) - 1, self.bulldozerPos[1] + (move %  10) - 1]
+	def adjustMovedRock(self, newRockPos: Pos):
+		self.rocks.remove(self.bulldozerPos)
+		self.rocks.append(newRockPos)
+	def __hash__(self) -> int: # TODO
+		return hash(f'{set([tuple(p) for p in self.rocks])}-{self.bulldozerPos}')
+	def __lt__(self, other):
+		return len(self.moves) < len(other.moves)
+	def _getToppest(self) -> Pos:
+		toppest = [len(self.tiles[0]), len(self.tiles)]
+		closed = set((tuple(self.bulldozerPos), ))
+		opened = deque((self.bulldozerPos, ))
+		while opened:
+			curr = opened.popleft()
+			if curr[1] < toppest[1] or curr[1] == toppest[1] and curr[0] < toppest[0]:
+				toppest = curr
+			for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
+				new = curr[0] + (move // 10) - 1, curr[1] + (move % 10) - 1
+				if self.tiles[new[1]][new[0]] == Tiles.FREE and new not in closed:
+					opened.append(list(new))
+					closed.add(new)
+		assert toppest[0] < len(self.tiles[0]) and toppest[1] < len(self.tiles)
+		return toppest
+	def __eq__(self, other):
+		return set([tuple(p) for p in self.rocks]) == set([tuple(p) for p in other.rocks]) and self._getToppest() == other._getToppest()
 
 # preprocessing ----------------------------------
 def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
@@ -65,14 +99,12 @@ def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
 	
 	return _copyTiles(tiles), [[t[0] + offsets[1], t[1] + offsets[0]] for t in targets]
 def checkLevel(tiles, targets, bulldozerPos, rocks):
-	assert False
-	# one bulldozer
+	# one bulldozer # TODO: test these
 	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
 
 	# as many rocks as targets
-	numRocks = sum([sum([t == Tiles.ROCK for t in row]) for row in tiles])
-	assert numRocks in [len(targets), len(targets) + 1]
-	if numRocks == len(targets) + 1:
+	assert len(rocks) in [len(targets), len(targets) + 1]
+	if len(rocks) == len(targets) + 1:
 		targets.append(bulldozerPos)
 	
 	# targets not on walls
@@ -96,7 +128,7 @@ def _identifyCorners(tiles, targets) -> list[list[bool]]:
 				forbidden[y][x] = True
 	return forbidden
 def _extendWall(tiles, targets, x, y, forbidden):
-	assert False
+	# assert False # TODO: test ---| junction
 	savedX, savedY = x, y
 	for xOff, yOff in [(0, 1), (1, 0)]:
 		x, y = savedX, savedY
@@ -126,81 +158,57 @@ def _copyTiles(tiles: Board):
 
 # solving ---------------------------------------------
 lastWindowWait = 0.0
-def solveLevel(tiles: Board, targets: list[Pos], bulldozerPos: Pos, rocks: list[Pos], forbidden: list[list[bool]]) -> list[Moves]:
-	startState = State(rocks, bulldozerPos, [])
+def solveLevel(startState) -> list[Moves]:
 	closed = set((startState, ))
-	success, moves = solveRecursion(tiles, targets, bulldozerPos, forbidden, closed)
-	if not success:
-		raise RuntimeError('Couldn\'t find a solution')
-	return moves
-def solveRecursion(tiles, targets, bulldozerPos, forbidden: list[list[bool]], closed: set) -> tuple[bool, list[Moves]]:
-	global lastWindowWait
-	if (t := time.time()) - lastWindowWait > 0.1:
-		lastWindowWait = t
-		if cv2.waitKey(1) == 'q' or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-			exit(0)
-			
-	for board, pos, moves in findPossibleRockMoves(tiles, bulldozerPos, forbidden):
-		if levelComplete(board, targets):
-			return (True, moves)
-		if (desc := stateDesc(board, pos)) in closed: continue
-		closed.add(desc)
-		success, postmoves = solveRecursion(board, targets, pos, forbidden, closed)
-		if success:
-			return (True, moves + postmoves)
-	return (False, [])			 
+	heap: list[State] = []
+	heapq.heappush(heap, startState)
+	outMoves = []
+	lastWindowWait = 0.0
+	while len(heap):
+		if (t := time.time()) - lastWindowWait > 0.1:
+			lastWindowWait = t
+			if cv2.waitKey(1) == 'q' or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
+				exit(0)
 
-def levelComplete(tiles: Board, targets: list[Pos]) -> bool:
-	for pos in targets:
-		if tiles[pos[1]][pos[0]] != Tiles.ROCK:
-			return False
-	return True
-def prepareLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos], Pos, list[Pos], list[list[bool]]]:
+		state = heapq.heappop(heap)
+		if state.levelWon():
+				if len(state.moves) < len(outMoves) or outMoves == []:
+					outMoves = state.moves
+				continue
+		for newState in findPossibleRockMoves(state):
+			if newState in closed: continue
+			closed.add(newState)
+			heapq.heappush(heap, newState)
+	return outMoves
+
+def prepareLevel(tiles: Board, targets: list[Pos]) -> State:
 	tiles, targets = clipLevel(tiles, targets)
 	bulldozerPos = [[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0]
-	rocks = tuple(sum([[[x, y] for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
+	rocks = sum([[[x, y] for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[])
 	
-	checkLevel(tiles, targets, bulldozerPos)
+	checkLevel(tiles, targets, bulldozerPos, rocks)
 	
 	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
 	forbidden = getForbiddenTiles(tiles, targets)
 	for rX, rY in rocks:
 		tiles[rY][rX] = Tiles.FREE
-	return tiles, targets, bulldozerPos, rocks, forbidden
+	return State(rocks, bulldozerPos, [], tiles, targets, forbidden)
 
-def stateDesc(tiles, bulldozerPos: Pos):
-	toppest = len(tiles[0]), len(tiles)
-	closed = set((tuple(bulldozerPos), ))
-	opened = deque((bulldozerPos, ))
+def findPossibleRockMoves(state: State) -> list[State]:
+	closed: set[tuple[int, int]] = set((tuple(state.bulldozerPos), ))
+	opened: deque[State] = deque((state, ))
+	newStates: list[State] = []
 	while opened:
-		curr = opened.popleft()
-		if curr[1] < toppest[1] or curr[1] == toppest[1] and curr[0] < toppest[0]:
-			toppest = tuple(curr)
+		s = opened.popleft()
 		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
-			new = curr[0] + (move // 10) - 1, curr[1] + (move % 10) - 1
-			if tiles[new[1]][new[0]] == Tiles.FREE and new not in closed:
-				opened.append(list(new))
-				closed.add(new)
-	assert toppest[0] < len(tiles[0]) and toppest[1] < len(tiles)
-	rocks = tuple(sum([[(x, y) for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
-	return rocks, toppest
-
-def findPossibleRockMoves(tiles: Board, bulldozerPos: Pos, forbidden: list[list[bool]]) -> list[RockMove]:
-	closed: set[tuple[int, int]] = set((tuple(bulldozerPos), ))
-	opened: deque[tuple[Pos, list[Moves]]] = deque(((bulldozerPos, []), ))
-	rockMoves: list[RockMove] = []
-	while opened:
-		curr, moves = opened.popleft()
-		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
-			currPos = curr[0] + (move // 10) - 1, curr[1] + (move % 10) - 1
-			if tiles[currPos[1]][currPos[0]] == Tiles.ROCK:
-				newRockPos = [currPos[0] + (move // 10) - 1, currPos[1] + (move % 10) - 1]
-				if tiles[newRockPos[1]][newRockPos[0]] == Tiles.FREE and not forbidden[newRockPos[1]][newRockPos[0]]:
-					newTiles = _copyTiles(tiles)
-					newTiles[newRockPos[1]][newRockPos[0]] = Tiles.ROCK
-					newTiles[currPos[1]][currPos[0]] = Tiles.FREE
-					rockMoves.append([newTiles, list(currPos), moves + [move]])
-			elif tiles[currPos[1]][currPos[0]] == Tiles.FREE and currPos not in closed:
-				opened.append((list(currPos), moves + [move]))
+			currS = s.movedBulldozer(move)
+			currPos = tuple(currS.bulldozerPos)
+			if currS.bulldozerPos in currS.rocks:
+				newRockPos = currS.movedPos(move)
+				if newRockPos not in currS.rocks and state.tiles[newRockPos[1]][newRockPos[0]] == Tiles.FREE and not state.forbidden[newRockPos[1]][newRockPos[0]]:
+					currS.adjustMovedRock(newRockPos)
+					newStates.append(currS)
+			elif state.tiles[currPos[1]][currPos[0]] == Tiles.FREE and currPos not in closed:
+				opened.append(currS)
 				closed.add(currPos)
-	return rockMoves
+	return newStates
