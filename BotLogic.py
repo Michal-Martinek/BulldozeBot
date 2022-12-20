@@ -18,6 +18,7 @@ class Moves: # 10 * (x off + 1) + (y off + 1)
 
 Pos = list[int]
 Board = list[list[Tiles]]
+DistMap = list[list[int]]
 
 @ dataclass
 class State:
@@ -28,11 +29,12 @@ class State:
 	tiles: list[list[Tiles]]
 	targets: list[Pos]
 	forbidden: list[list[bool]]
+	distMaps: list[DistMap]
 
 	def levelWon(self):
 		return all([t in self.rocks for t in self.targets])
 	def movedBulldozer(self, move: Moves):
-		return State(self.rocks.copy(), self.movedPos(move), self.moves + [move], self.tiles, self.targets, self.forbidden)
+		return State(self.rocks.copy(), self.movedPos(move), self.moves + [move], self.tiles, self.targets, self.forbidden, self.distMaps)
 	def movedPos(self, move: Moves) -> Pos:
 		return [self.bulldozerPos[0] + (move // 10) - 1, self.bulldozerPos[1] + (move %  10) - 1]
 	def adjustMovedRock(self, newRockPos: Pos):
@@ -156,6 +158,51 @@ def getForbiddenTiles(tiles, targets) -> list[list[bool]]:
 def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
+def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
+	openedH: list[tuple[int, Pos, set[Moves]]] = [(0, target, set())]
+	openedD: dict[tuple[int, int]] = {tuple(target): 0}
+	closed: set[tuple[int, int]] = set()
+	while openedH:
+		dist, opened, prevMoves = heapq.heappop(openedH)
+		if opened == startPos:
+			return dist
+		closed.add(tuple(opened))
+		openedD.pop(tuple(opened))
+		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
+			pos = [opened[0] + (move // 10) - 1, opened[1] + (move %  10) - 1]
+			far = [pos[0] + (move // 10) - 1, pos[1] + (move %  10) - 1]
+			if tuple(pos) in closed or state.tiles[pos[1]][pos[0]] == Tiles.WALL or state.tiles[far[1]][far[0]] == Tiles.WALL:
+				continue
+			newDist = dist + 1 + 2 * (move not in prevMoves and len(prevMoves)) # TODO: if its around corner, we should check the len of the path
+			if tuple(pos) in openedD:
+				for i, entry in enumerate(openedH):
+					if entry[1] == pos:
+						entry[2].add(move)
+
+				if openedD[tuple(pos)] > newDist:
+					for i, entry in enumerate(openedH):
+						if entry[1] == pos:
+							openedH.pop(i)
+							break
+					else: assert False
+					openedH.append((newDist, pos, entry[2]))
+					openedD[tuple(pos)] = newDist
+					heapq.heapify(openedH)
+			else:
+				heapq.heappush(openedH, (newDist, pos, set((move, ))))
+				openedD[tuple(pos)] = newDist
+	return -1
+def computeDistMaps(state: State):
+	for target in state.targets:
+		dists = [[-1 for x in range(len(state.tiles[0]))] for y in range(len(state.tiles))]
+		for y in range(len(state.tiles)):
+			for x in range(len(state.tiles[0])):
+				if state.forbidden[y][x] or state.tiles[y][x] == Tiles.WALL:
+					continue
+				dist = _findDistToTarget(state, [x, y], target)
+				dists[y][x] = dist
+		state.distMaps.append(dists)
+
 # solving ---------------------------------------------
 lastWindowWait = 0.0
 def solveLevel(startState) -> list[Moves]:
@@ -190,9 +237,12 @@ def prepareLevel(tiles: Board, targets: list[Pos]) -> State:
 	
 	tiles[bulldozerPos[1]][bulldozerPos[0]] = Tiles.FREE
 	forbidden = getForbiddenTiles(tiles, targets)
+	state = State(rocks, bulldozerPos, [], tiles, targets, forbidden, [])
+	computeDistMaps(state)
 	for rX, rY in rocks:
-		tiles[rY][rX] = Tiles.FREE
-	return State(rocks, bulldozerPos, [], tiles, targets, forbidden)
+		state.tiles[rY][rX] = Tiles.FREE
+	assert len(state.distMaps) == len(state.targets)
+	return state
 
 def findPossibleRockMoves(state: State) -> list[State]:
 	closed: set[tuple[int, int]] = set((tuple(state.bulldozerPos), ))
