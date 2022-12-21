@@ -4,7 +4,8 @@ import cv2
 import re, os
 
 import BotLogic
-from BotLogic import Tiles, Moves, State
+from BotLogic import State
+from Classes import Tiles, Moves, Pos
 
 # window capture ---------------------------------
 windowNames = {}
@@ -114,14 +115,14 @@ def _getImg(tile, targets, pos, forbidden):
 	return templates[tileName]
 def drawDetectedLevel(state: State):
 	img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
-	for y, col in enumerate(state.tiles):
-		for x, tile in enumerate(col):
-			if [x, y] == state.bulldozerPos:
-				tile = Tiles.BULLDOZER
-			if [x, y] in state.rocks:
-				tile = Tiles.ROCK
-			template = _getImg(tile, state.targets, [x, y], state.forbidden[y][x])
-			blit(img, template, x * TILESIZE, y * TILESIZE)
+	for pos in Pos.iterBoard(state.tiles, inner=False):
+		tile = state.tiles[pos.y][pos.x]
+		if pos == state.bulldozerPos:
+			tile = Tiles.BULLDOZER
+		if pos in state.rocks:
+			tile = Tiles.ROCK
+		template = _getImg(tile, state.targets, pos, state.forbidden[pos.y][pos.x])
+		blit(img, template, pos.x * TILESIZE, pos.y * TILESIZE)
 	return img
 # object detection --------------------------------------
 def clipScreenshot(img):
@@ -165,7 +166,7 @@ def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
 			tile, target = matchBlock(img[y * TILESIZE : y * TILESIZE + TILESIZE, x * TILESIZE : x * TILESIZE + TILESIZE])
 			tiles[y][x] = tile
 			if target:
-				targets.append([x, y])
+				targets.append(Pos(x, y))
 	return tiles, targets
 
 # executing moves ------------------------------------
