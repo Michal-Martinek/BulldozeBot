@@ -82,7 +82,7 @@ def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
 	
 	return _copyTiles(tiles), set([Pos(t.x + offsets[1], t.y + offsets[0]) for t in targets])
 def checkLevel(tiles, targets, bulldozerPos, rocks):
-	# one bulldozer # TODO: test these
+	# one bulldozer
 	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
 
 	# as many rocks as targets
@@ -91,7 +91,7 @@ def checkLevel(tiles, targets, bulldozerPos, rocks):
 		targets.add(bulldozerPos)
 	
 	# targets not on walls
-	assert all([[pos.at(tiles) != Tiles.WALL] for pos in targets])
+	assert all([(pos.at(tiles) != Tiles.WALL) for pos in targets])
 	
 	# walls around level
 	assert all([tiles[0][x] == Tiles.WALL and tiles[-1][x] == Tiles.WALL for x in range(len(tiles[0]))])
@@ -195,7 +195,6 @@ def prepareLevel(tiles: Board, targets: list[Pos]) -> State:
 	tiles, targets = clipLevel(tiles, targets)
 	bulldozerPos = Pos(*[[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0])
 	rocks = set(sum([[Pos(x, y) for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
-	
 	checkLevel(tiles, targets, bulldozerPos, rocks)
 	
 	tiles[bulldozerPos.y][bulldozerPos.x] = Tiles.FREE
