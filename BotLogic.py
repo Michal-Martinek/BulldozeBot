@@ -1,12 +1,11 @@
 from collections import deque
 import cv2, time
-from Classes import Tiles, Moves, Pos, Heap, heapq # TODO
+from Classes import Tiles, Moves, Pos, Heap
 
 Board = list[list[Tiles]]
 DistMap = list[list[int]]
 
-class State:
-	# TODO: rocks and targets should be a set(), add getitem overload to boards
+class State: # TODO: add costs to states
 	def __init__(self, rocks: set[Pos], bulldozerPos: Pos, moves: list[Moves], tiles: list[list[Tiles]], targets: set[Pos], forbidden: list[list[bool]], distMaps: list[DistMap]):
 		self.rocks = rocks
 		self.bulldozerPos = bulldozerPos
@@ -120,7 +119,7 @@ def _extendWall(tiles, targets, pos: Pos, forbidden):
 		while pos.at(tiles) != Tiles.WALL and pos not in targets and (not pos.at(forbidden) or started) and (wallTop or wallBottom):
 			wallTop = wallTop and tiles[pos.y-xOff][pos.x-yOff] == Tiles.WALL
 			wallBottom = wallBottom and tiles[pos.y+xOff][pos.x+yOff] == Tiles.WALL
-			foundTiles.append(pos)
+			foundTiles.append(pos.copy())
 			pos.x += xOff
 			pos.y += yOff
 			started = False
@@ -138,38 +137,25 @@ def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
 def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
-	openedH: list[tuple[int, Pos, set[Moves]]] = [(0, target, set())]
-	openedD: dict[Pos, int] = {target: 0}
+	openedH = Heap((0, target, set()))
 	closed: set[Pos] = set()
 	while openedH:
-		dist, opened, prevMoves = heapq.heappop(openedH)
+		dist, opened, prevMoves = openedH.pop()
 		if opened == startPos:
 			return dist
 		closed.add(opened)
-		openedD.pop(opened)
 		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
 			pos = opened.moved(move)
 			far = pos.moved(move)
 			if pos in closed or pos.at(state.tiles) == Tiles.WALL or far.at(state.tiles) == Tiles.WALL:
 				continue
 			newDist = dist + 1 + 2 * (move not in prevMoves and len(prevMoves)) # TODO: if its around corner, we should check the len of the path
-			if pos in openedD:
-				for i, entry in enumerate(openedH):
-					if entry[1] == pos:
-						entry[2].add(move)
-
-				if openedD[pos] > newDist:
-					for i, entry in enumerate(openedH):
-						if entry[1] == pos:
-							openedH.pop(i)
-							break
-					else: assert False
-					openedH.append((newDist, pos, entry[2]))
-					openedD[pos] = newDist
-					heapq.heapify(openedH)
+			if openedH.has(pos):
+				openedH[pos][2].add(move)
+				if openedH[pos][0] > newDist:
+					openedH.decreasePriority(pos, newDist)
 			else:
-				heapq.heappush(openedH, (newDist, pos, set((move, ))))
-				openedD[pos] = newDist
+				openedH.push((newDist, pos, set((move, ))))
 	return -1
 def computeDistMaps(state: State):
 	for target in state.targets:
@@ -185,25 +171,24 @@ def computeDistMaps(state: State):
 lastWindowWait = 0.0
 def solveLevel(startState) -> list[Moves]:
 	closed = set((startState, ))
-	heap: list[State] = []
-	heapq.heappush(heap, startState)
+	heap = Heap((0, startState))
 	outMoves = []
 	lastWindowWait = 0.0
-	while len(heap):
+	while heap:
 		if (t := time.time()) - lastWindowWait > 0.1:
 			lastWindowWait = t
 			if cv2.waitKey(1) == 'q' or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
 				exit(0)
 
-		state = heapq.heappop(heap)
+		state: State = heap.pop()[1]
 		if state.levelWon():
-				if len(state.moves) < len(outMoves) or outMoves == []:
-					outMoves = state.moves
-				continue
+			if len(state.moves) < len(outMoves) or outMoves == []:
+				outMoves = state.moves
+			continue
 		for newState in findPossibleRockMoves(state):
 			if newState in closed: continue
 			closed.add(newState)
-			heapq.heappush(heap, newState)
+			heap.push((0, newState))
 	return outMoves
 
 def prepareLevel(tiles: Board, targets: list[Pos]) -> State:
