@@ -5,7 +5,7 @@ from Classes import Tiles, Moves, Pos, Heap
 Board = list[list[Tiles]]
 DistMap = list[list[int]]
 
-class State: # TODO: add costs to states
+class State:
 	def __init__(self, rocks: set[Pos], bulldozerPos: Pos, moves: list[Moves], tiles: list[list[Tiles]], targets: set[Pos], forbidden: list[list[bool]], distMaps: list[DistMap]):
 		self.rocks = rocks
 		self.bulldozerPos = bulldozerPos
@@ -14,17 +14,33 @@ class State: # TODO: add costs to states
 		self.targets = targets
 		self.forbidden = forbidden
 		self.distMaps = distMaps
+
+		self._hCost = -1
+		self._toppest = None
 	def levelWon(self):
-		return all([t in self.rocks for t in self.targets])
+		return self.rocks ==  self.targets
 	def movedBulldozer(self, move: Moves):
 		return State(self.rocks.copy(), self.bulldozerPos.moved(move), self.moves + [move], self.tiles, self.targets, self.forbidden, self.distMaps)
 	def adjustMovedRock(self, newRockPos: Pos):
 		self.rocks.remove(self.bulldozerPos)
 		self.rocks.add(newRockPos)
-	def __hash__(self) -> int: # TODO
-		return hash(f'{set([tuple(p) for p in self.rocks])}-{self.bulldozerPos}')
+		self._toppest = None
+		self._hCost = -1
+	def takeBetterFrom(self, other):
+		if len(self.moves) > len(other.moves): # TODO: the two states don't have to have the same bulldozer pos, so the moves couldn't be the same
+			self.moves = other.moves.copy()
+
+	def __hash__(self) -> int:
+		return hash((tuple(self.rocks), self.toppest))
+	def __repr__(self) -> str:
+		c = self.cost
+		return f'State({self.bulldozerPos}, g={c}, h={self._hCost})'
 	def __lt__(self, other):
-		return len(self.moves) < len(other.moves)
+		if self.cost == other.cost:
+			return self._hCost < other._hCost
+		return self.cost < other.cost
+	def __eq__(self, other):
+		return self.rocks == other.rocks and self.toppest == other.toppest
 	def _getToppest(self) -> Pos:
 		toppest = Pos(len(self.tiles[0]), len(self.tiles))
 		closed = set((self.bulldozerPos, ))
@@ -40,8 +56,38 @@ class State: # TODO: add costs to states
 					closed.add(new)
 		assert toppest.x < len(self.tiles[0]) and toppest.y < len(self.tiles)
 		return toppest
-	def __eq__(self, other):
-		return self.rocks == other.rocks and self._getToppest() == other._getToppest()
+	
+	def calcHeuristic(self) -> bool:
+		table = [[rock.at(distMap) for rock in self.rocks] for distMap in self.distMaps]
+		h = self._bestHeuristic(table)
+		self._hCost = h
+		return h != -1
+	def _bestHeuristic(self, table: list[list[int]]):
+		if len(table) == 1:
+			return table[0][0]
+		best = -1
+		for col in range(len(table[0])):
+			if table[0][col] == -1: continue
+			cost = self._bestHeuristic([[dist for x, dist in enumerate(row) if x != col] for row in table[1:]])
+			if cost == -1: continue
+			cost += table[0][col]
+			if cost < best or best == -1:
+				best = cost
+		return best
+
+	@ property
+	def toppest(self) -> Pos:
+		if self._toppest is not None:
+			return self._toppest
+		self._toppest = self._getToppest()
+		return self._toppest
+	@ property
+	def cost(self) -> int:
+		if self._hCost == -1:
+			solvable = self.calcHeuristic()
+			if not solvable:
+				self._hCost = 1000000000
+		return self._hCost + len(self.moves)
 
 # preprocessing ----------------------------------
 def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
@@ -137,7 +183,7 @@ def _copyTiles(tiles: Board):
 	return [[t for t in row] for row in tiles]
 
 def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
-	openedH = Heap((0, target, set()))
+	openedH = Heap((0, target, tuple()))
 	closed: set[Pos] = set()
 	while openedH:
 		dist, opened, prevMoves = openedH.pop()
@@ -150,12 +196,13 @@ def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
 			if pos in closed or pos.at(state.tiles) == Tiles.WALL or far.at(state.tiles) == Tiles.WALL:
 				continue
 			newDist = dist + 1 + 2 * (move not in prevMoves and len(prevMoves)) # TODO: if its around corner, we should check the len of the path
-			if openedH.has(pos):
-				openedH[pos][2].add(move)
-				if openedH[pos][0] > newDist:
+			if openedH.hasKey(pos):
+				i = openedH.index(pos)
+				openedH.changeMetadata(i, (openedH.heap[i][2] + (move,),))
+				if openedH.heap[i][0] > newDist:
 					openedH.decreasePriority(pos, newDist)
 			else:
-				openedH.push((newDist, pos, set((move, ))))
+				openedH.push((newDist, pos, (move, )))
 	return -1
 def computeDistMaps(state: State):
 	for target in state.targets:
@@ -169,26 +216,31 @@ def computeDistMaps(state: State):
 
 # solving ---------------------------------------------
 lastWindowWait = 0.0
-def solveLevel(startState) -> list[Moves]:
-	closed = set((startState, ))
-	heap = Heap((0, startState))
+def solveLevel(startState: State) -> list[Moves]:
+	closed: set[State] = set()
+	heap = Heap(startState)
 	outMoves = []
 	lastWindowWait = 0.0
 	while heap:
-		if (t := time.time()) - lastWindowWait > 0.1:
+		if (t := time.time()) - lastWindowWait > 0.1: # TODO: move solving to another thread than window stuff
 			lastWindowWait = t
 			if cv2.waitKey(1) == 'q' or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
 				exit(0)
 
-		state: State = heap.pop()[1]
+		state = heap.pop()
+		closed.add(state)
 		if state.levelWon():
 			if len(state.moves) < len(outMoves) or outMoves == []:
 				outMoves = state.moves
 			continue
 		for newState in findPossibleRockMoves(state):
 			if newState in closed: continue
-			closed.add(newState)
-			heap.push((0, newState))
+			if heap.hasItem(newState):
+				i = heap.getItemIdx(newState)
+				heap.heap[i].takeBetterFrom(newState)
+				heap.changedPriority(i)
+			else:
+				heap.push(newState)
 	return outMoves
 
 def prepareLevel(tiles: Board, targets: list[Pos]) -> State:

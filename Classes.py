@@ -15,6 +15,7 @@ class Moves: # 10 * (x off + 1) + (y off + 1)
 	RIGHT = 21
 	LEFT = 1
 
+BoardDtype = TypeVar('BoardDtype')
 @ dataclass
 class Pos:
 	x: int
@@ -27,7 +28,7 @@ class Pos:
 		self.y += (move %  10) - 1
 	def copy(self):
 		return Pos(self.x, self.y)
-	def at(self, b: list[list]):
+	def at(self, b: list[list[BoardDtype]]) -> BoardDtype:
 		return b[self.y][self.x]
 	def __hash__(self):
 		return hash((self.x, self.y))
@@ -49,19 +50,27 @@ T = TypeVar('T')
 class Heap(Generic[T]):
 	def __init__(self, item:T=None):
 		self.heap: list[T] = []
-		self.inSet = set()
+		self.inSet: set[T] = set()
 		if item is not None:
 			self.push(item)
+	def __repr__(self) -> str:
+		return 'Heap(' + repr(self.heap) + ')'
 	
 	def push(self, item):
-		assert isinstance(item, tuple) and len(item) >= 2, 'item must be a tuple of at least priority, key'
-		assert item[1] not in self.inSet
+		assert getattr(item, '__lt__', None), 'the item must have a __lt__ method'
+		assert getattr(item, '__hash__', None), 'the item must have a __hash__ method'
+		assert getattr(item, '__eq__', None), 'the item must have a __eq__ method'
+		assert item not in self.inSet
 		heapq.heappush(self.heap, item)
-		self.inSet.add(item[1])
+		self.inSet.add(item)
 	def index(self, key):
+		'''use only if the item is a (priority, key) tuple'''
 		return list(map(lambda x:x[1], self.heap)).index(key)
 	def __getitem__(self, key):
 		return self.heap[self.index(key)]
+	def getItemIdx(self, item):
+		'''returns the index of item inside itself which is __eq__ to param item'''
+		return self.heap.index(item)
 	def __len__(self):
 		return len(self.heap)
 	def __bool__(self):
@@ -69,15 +78,31 @@ class Heap(Generic[T]):
 
 	def pop(self):
 		item = heapq.heappop(self.heap)
-		self.inSet.remove(item[1])
+		self.inSet.remove(item)
 		return item
 	def decreasePriority(self, key, priority):
-		assert key in self.inSet
+		'''use only if the item is a (priority, key) tuple'''
 		i = self.index(key)
+		self.inSet.remove(self.heap[i])
 		self.heap[i] = (priority, *self.heap[i][1:])
+		self.inSet.add(self.heap[i])
 		self._siftdown(i)
-	def has(self, item) -> bool:
+	def changeMetadata(self, i, new: tuple):
+		'''use only if the item is a (priority, key, meta1, ...) tuple'''
+		self.inSet.remove(self.heap[i])
+		self.heap[i] = (*self.heap[i][:2], *new)
+		self.inSet.add(self.heap[i])
+	def changedPriority(self, i):
+		self._siftdown(i)
+	
+	def hasItem(self, item) -> bool:
 		return item in self.inSet
+	def hasKey(self, key) -> bool:
+		try:
+			self.index(key)
+			return True
+		except ValueError:
+			return False
 	def _siftdown(self, pos):
 		newitem = self.heap[pos]
 		# Follow the path to the root, moving parents down until finding a place
