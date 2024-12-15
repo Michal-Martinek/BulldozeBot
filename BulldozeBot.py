@@ -2,32 +2,41 @@ import win32gui, win32ui, win32con
 import numpy as np
 import cv2
 import re, os
+import subprocess
 
 import BotLogic
 from BotLogic import State
 from Classes import Tiles, Moves, Pos
 
+os.chdir(os.path.dirname(__file__))
+
 # window capture ---------------------------------
-windowNames = {}
-def winEnumHandler(hwnd, ctx):
-	if win32gui.IsWindowVisible(hwnd):
+def startBuldozeExe():
+	print('INFO: starting BULLDOZE.exe')
+	subprocess.Popen('"BULLDOZE Game\\BULLDOZE.exe"', shell=False, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+	cv2.waitKey(500)
+def getPossibleWindows(errorOnNone=False) -> dict[int, str]:
+	windows = {}
+	windowRegex = 'Bulldozer - Level \\d+'
+	def winEnumHandler(hwnd, ctx):
+		if not win32gui.IsWindowVisible(hwnd): return
 		name = win32gui.GetWindowText(hwnd)
-		windowNames[name] = hwnd
-def findBulldozerWindow() -> int:
-	win32gui.EnumWindows(winEnumHandler, None)
-	bulldozerWindowName = 'Bulldozer - Level \\d+'
-	potentialWindowNames = [s for s in windowNames if re.match(bulldozerWindowName, s)]
-	if len(potentialWindowNames) > 1:
-		print('WARNING: Multiple Buldoze game windows found')
-	elif len(potentialWindowNames) == 0:
-		sep = "', '"
-		print('ERROR: Could not find Bulldozer game window')
-		print(f"NOTE: windows found '{sep.join(windowNames.keys())}'")
-		exit(1)
-	hwnd = windowNames[potentialWindowNames[0]]
-	print(f'Found window {win32gui.GetWindowText(hwnd)}')
-	return hwnd
+		if re.match(windowRegex, name):
+			windows[hwnd] = name
 	
+	win32gui.EnumWindows(winEnumHandler, None)
+	assert not errorOnNone or len(windows), 'Could not find Bulldozer game window'
+	return windows
+def findBulldozerWindow() -> int:
+	potentialWindows = getPossibleWindows()
+	if not len(potentialWindows):
+		startBuldozeExe()
+		potentialWindows = getPossibleWindows(True)
+	if len(potentialWindows) > 1:
+		print('WARNING: Multiple Buldoze game windows found')
+	hwnd = tuple(potentialWindows.keys())[0]
+	print(f'Found window "{win32gui.GetWindowText(hwnd)}"')
+	return hwnd
 
 def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
 		# maximize the window
@@ -50,6 +59,7 @@ def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
 		signedIntsArray = dataBitMap.GetBitmapBits(True)
 		img = np.frombuffer(signedIntsArray, dtype='uint8')
 		img.shape = (H, W, 4)
+		img = img[...,:3]
 
 		# free resources
 		dcObj.DeleteDC()
@@ -57,38 +67,19 @@ def getScreenshot(hwnd, cropped_x=8, cropped_y=30):
 		win32gui.ReleaseDC(hwnd, wDC)
 		win32gui.DeleteObject(dataBitMap.GetHandle())
 
-		# drop the alpha channel, or cv.matchTemplate() will throw an error like:
-		#   error: (-215:Assertion failed) (depth == CV_8U || depth == CV_32F) && type == _templ.type() 
-		#   && _img.dims() <= 2 in function 'cv::matchTemplate'
-		img = img[...,:3]
-
 		# make image C_CONTIGUOUS to avoid errors that look like:
 		#   File ... in draw_rectangles
 		#   TypeError: an integer is required (got type tuple)
 		# see the discussion here:
 		# https://github.com/opencv/opencv/issues/14866#issuecomment-580207109
 		img = np.ascontiguousarray(img)
-
 		return img
 
 # templates --------------------------------------
 TILESIZE = 32
 templates = {
-	'Free': cv2.imread(os.path.join('Templates', 'Free.png'), cv2.IMREAD_COLOR),
-	'Free-forbidden': cv2.imread(os.path.join('Templates', 'Free-forbidden.png'), cv2.IMREAD_COLOR),
-	'Bulldozer-down': cv2.imread(os.path.join('Templates', 'Bulldozer-down.png'), cv2.IMREAD_COLOR),
-	'Bulldozer-left': cv2.imread(os.path.join('Templates', 'Bulldozer-left.png'), cv2.IMREAD_COLOR),
-	'Bulldozer-right': cv2.imread(os.path.join('Templates', 'Bulldozer-right.png'), cv2.IMREAD_COLOR),
-	'Bulldozer-up': cv2.imread(os.path.join('Templates', 'Bulldozer-up.png'), cv2.IMREAD_COLOR),
-	'Bulldozer-forbidden': cv2.imread(os.path.join('Templates', 'Bulldozer-forbidden.png'), cv2.IMREAD_COLOR),
-	'Bulldozer-target': cv2.imread(os.path.join('Templates', 'Bulldozer-target.png'), cv2.IMREAD_COLOR),
-	'Rock': cv2.imread(os.path.join('Templates', 'Rock.png'), cv2.IMREAD_COLOR),
-	'RockOnTarget': cv2.imread(os.path.join('Templates', 'RockOnTarget.png'), cv2.IMREAD_COLOR),
-	'Target': cv2.imread(os.path.join('Templates', 'Target.png'), cv2.IMREAD_COLOR),
-	'Wall':  cv2.imread(os.path.join('Templates', 'Wall.png' ), cv2.IMREAD_COLOR),
-	'Wall2': cv2.imread(os.path.join('Templates', 'Wall2.png'), cv2.IMREAD_COLOR),
-	'Wall3': cv2.imread(os.path.join('Templates', 'Wall3.png'), cv2.IMREAD_COLOR),
-	'Wall4': cv2.imread(os.path.join('Templates', 'Wall4.png'), cv2.IMREAD_COLOR),
+	file.split('.')[0] : cv2.imread(os.path.join('Templates', file), cv2.IMREAD_COLOR)
+		for file in os.listdir('Templates')
 }
 # drawing -----------------------------------
 def blit(img, src, x_offset: int, y_offset: int):
@@ -104,9 +95,9 @@ def boxLocations(img, locs, templShape, color):
 def drawGridlines(img):
 	img[0:img.shape[0]:TILESIZE] = (0, 0, 0)
 	img[:, 0:img.shape[1]:TILESIZE] = (0, 0, 0)
-def _getImg(tile, targets, pos, forbidden):
+def _getImg(tile: Tiles, isTarget: bool, forbidden: bool):
 	tileName = {Tiles.FREE: ['Free', 'Free-forbidden'][forbidden],	Tiles.BULLDOZER: ['Bulldozer-up', 'Bulldozer-forbidden'][forbidden], Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
-	if pos in targets:
+	if isTarget:
 		if tile == Tiles.BULLDOZER:
 			tileName = 'Bulldozer-target'
 		elif tile == Tiles.ROCK:
@@ -121,16 +112,18 @@ def drawDetectedLevel(state: State):
 			tile = Tiles.BULLDOZER
 		if pos in state.rocks:
 			tile = Tiles.ROCK
-		template = _getImg(tile, state.targets, pos, state.forbidden[pos.y][pos.x])
+		template = _getImg(tile, pos in state.targets, state.forbidden[pos.y][pos.x])
 		blit(img, template, pos.x * TILESIZE, pos.y * TILESIZE)
 	return img
 # object detection --------------------------------------
 def clipScreenshot(img):
 	matched = cv2.matchTemplate(img, templates['Rock'], cv2.TM_CCOEFF_NORMED)
-	posses = np.where(matched > 0.90)
-	assert posses[0].shape[0] > 0, 'Could not find any rocks, the level is probably solved'
-	minPos = min(posses[0]) % TILESIZE, min(posses[1]) % TILESIZE
-	return img[minPos[0]:, minPos[1]:]
+	posses = np.array( np.where(matched > 0.90) )
+	assert posses.size, 'Could not find any rocks, the level is probably solved'
+	minPos = np.min(posses, axis=1) % TILESIZE
+	img = img[minPos[0]:, minPos[1]:]
+	height, width = img.shape[0] // TILESIZE, img.shape[1] // TILESIZE
+	return img[:height * TILESIZE, :width * TILESIZE].copy(), (height, width)
 def getBestMatch(img) -> str:
 	bestMatch = 'Free'
 	bestVal = 0.0
@@ -157,20 +150,20 @@ def matchBlock(img) -> tuple[Tiles, bool]:
 		matched = Tiles.WALL
 	return matched, matchName in ['RockOnTarget', 'Target']
 	
-def detectLevel(img) -> tuple[list[list[Tiles]], list[list[int]]]:
-	width, height = img.shape[1] // TILESIZE, img.shape[0] // TILESIZE
-	tiles = [[Tiles.FREE for x in range(width)] for y in range(height)]
-	targets = []
-	for x in range(width):
-		for y in range(height):
-			tile, target = matchBlock(img[y * TILESIZE : y * TILESIZE + TILESIZE, x * TILESIZE : x * TILESIZE + TILESIZE])
-			tiles[y][x] = tile
+def detectLevel(img: np.ndarray, height, width) -> tuple[list[list[Tiles]], list[Pos]]:
+	blocks = img.reshape((height, TILESIZE, width, TILESIZE, 3))
+	tiles, targets = [], []
+	for y in range(height):
+		tiles.append([])
+		for x in range(width):
+			tile, target = matchBlock(blocks[y, :, x])
+			tiles[-1].append(tile)
 			if target:
 				targets.append(Pos(x, y))
 	return tiles, targets
 
 # executing moves ------------------------------------
-def executeMoves(moves: list[Moves], hwnd, duration=100):
+def executeMoves(moves: list[Moves], hwnd, duration=20):
 	mapp = {Moves.UP: 'W', Moves.DOWN: 'S', Moves.RIGHT: 'D', Moves.LEFT: 'A'}
 	for move in [ord(mapp[m]) for m in moves]:
 		win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, move, 0)
@@ -182,10 +175,9 @@ def executeMoves(moves: list[Moves], hwnd, duration=100):
 def main():
 	hwnd = findBulldozerWindow()
 	img = getScreenshot(hwnd)
-
-	img = clipScreenshot(img)
-	tiles, targets = detectLevel(img)
-
+	
+	img, dims = clipScreenshot(img)
+	tiles, targets = detectLevel(img, *dims)
 	state = BotLogic.prepareLevel(tiles, targets)
 
 	img = drawDetectedLevel(state)
@@ -196,7 +188,18 @@ def main():
 	print(f'INFO: found a solution with {len(moves)} moves')
 	executeMoves(moves, hwnd)
 
+	retry = False
+	while True:
+		if cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
+			break
+		if (key := cv2.waitKey(1)) in [ord('q'), ord('r')]:
+			if key == ord('r'):
+				retry = True
+			break
+
 	cv2.destroyAllWindows()
+	return retry
 
 if __name__ == '__main__':
-	main()
+	while main():
+		pass

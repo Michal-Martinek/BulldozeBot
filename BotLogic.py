@@ -1,9 +1,12 @@
 from collections import deque
+import numpy as np
 import cv2, time
 from Classes import Tiles, Moves, Pos, Heap
 
 Board = list[list[Tiles]]
 DistMap = list[list[int]]
+
+FLOAT_MAX_VAL = np.float32('inf')
 
 class State:
 	def __init__(self, rocks: set[Pos], bulldozerPos: Pos, moves: list[Moves], tiles: list[list[Tiles]], targets: set[Pos], forbidden: list[list[bool]], distMaps: list[DistMap]):
@@ -34,7 +37,7 @@ class State:
 		return hash((tuple(self.rocks), self.toppest))
 	def __repr__(self) -> str:
 		c = self.cost
-		return f'State({self.bulldozerPos}, g={c}, h={self._hCost})'
+		return f'State({self.bulldozerPos}, g={c}, h={self._hCost}, rocks={self.rocks})'
 	def __lt__(self, other):
 		if self.cost == other.cost:
 			return self._hCost < other._hCost
@@ -51,29 +54,31 @@ class State:
 				toppest = curr
 			for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
 				new = curr.moved(move)
-				if new.at(self.tiles)== Tiles.FREE and new not in closed:
+				if new.at(self.tiles) == Tiles.FREE and new not in self.rocks and new not in closed:
 					opened.append(new)
 					closed.add(new)
 		assert toppest.x < len(self.tiles[0]) and toppest.y < len(self.tiles)
 		return toppest
 	
 	def calcHeuristic(self) -> bool:
-		table = [[rock.at(distMap) for rock in self.rocks] for distMap in self.distMaps]
-		h = self._bestHeuristic(table)
-		self._hCost = h
-		return h != -1
-	def _bestHeuristic(self, table: list[list[int]]):
-		if len(table) == 1:
-			return table[0][0]
-		best = -1
-		for col in range(len(table[0])):
-			if table[0][col] == -1: continue
-			cost = self._bestHeuristic([[dist for x, dist in enumerate(row) if x != col] for row in table[1:]])
-			if cost == -1: continue
-			cost += table[0][col]
-			if cost < best or best == -1:
-				best = cost
-		return best
+		table = np.zeros((len(self.rocks), len(self.targets)), dtype='float32')
+		for r, rock in enumerate(self.rocks):
+			for m, distMap in enumerate(self.distMaps):
+				cost = rock.at(distMap)
+				if cost == -1: cost = np.float32('inf')
+				table[r, m] = cost
+		self._hCost = self._bestHeuristic(table)
+		return self._hCost != np.float32('inf')
+	def _bestHeuristic(self, table: np.ndarray):
+		if table.size == 1:
+			return table[0, 0]
+		for col in np.argsort(table[0]):
+			if table[0, col] == FLOAT_MAX_VAL: return FLOAT_MAX_VAL # there are only infs left
+			otherColIdxs = np.delete(np.arange(table.shape[1]), col)
+			cost = self._bestHeuristic(table[1:, otherColIdxs])
+			if cost == FLOAT_MAX_VAL: continue
+			return cost + table[0][col]
+		return FLOAT_MAX_VAL
 
 	@ property
 	def toppest(self) -> Pos:
@@ -87,7 +92,7 @@ class State:
 			solvable = self.calcHeuristic()
 			if not solvable:
 				self._hCost = 1000000000
-		return self._hCost + len(self.moves)
+		return 4 * self._hCost + len(self.moves)
 
 # preprocessing ----------------------------------
 def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
@@ -128,16 +133,13 @@ def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
 	
 	return _copyTiles(tiles), set([Pos(t.x + offsets[1], t.y + offsets[0]) for t in targets])
 def checkLevel(tiles, targets, bulldozerPos, rocks):
-	# one bulldozer
-	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles])
-
-	# as many rocks as targets
-	assert len(rocks) in [len(targets), len(targets) + 1]
+	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles]), 'exactly one bulldozer expected'
+	
 	if len(rocks) == len(targets) + 1:
 		targets.add(bulldozerPos)
+	assert len(rocks) == len(targets), 'number of rocks and targets doesn\'t match'
 	
-	# targets not on walls
-	assert all([(pos.at(tiles) != Tiles.WALL) for pos in targets])
+	assert all([(pos.at(tiles) != Tiles.WALL) for pos in targets]), 'targets may not be on walls'
 	
 	# walls around level
 	assert all([tiles[0][x] == Tiles.WALL and tiles[-1][x] == Tiles.WALL for x in range(len(tiles[0]))])
@@ -216,23 +218,27 @@ def computeDistMaps(state: State):
 
 # solving ---------------------------------------------
 lastWindowWait = 0.0
-def solveLevel(startState: State) -> list[Moves]:
+def solveLevel(startState: State, draw) -> list[Moves]:
 	closed: set[State] = set()
 	heap = Heap(startState)
-	outMoves = []
 	lastWindowWait = 0.0
 	while heap:
-		if (t := time.time()) - lastWindowWait > 0.1: # TODO: move solving to another thread than window stuff
-			lastWindowWait = t
-			if cv2.waitKey(1) == 'q' or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-				exit(0)
-
 		state = heap.pop()
 		closed.add(state)
+
+		img = draw(state)
+		cv2.imshow('BulldozeBot', img)
+		if (t := time.time()) - lastWindowWait > 0.1: # TODO: move solving to another thread than window stuff
+			lastWindowWait = t
+			key = cv2.waitKey(1)
+			if key == 32:
+				print('PAUSED')
+				return []
+			if key == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
+				exit(0)
+
 		if state.levelWon():
-			if len(state.moves) < len(outMoves) or outMoves == []:
-				outMoves = state.moves
-			continue
+			return state.moves
 		for newState in findPossibleRockMoves(state):
 			if newState in closed: continue
 			if heap.hasItem(newState):
@@ -241,7 +247,7 @@ def solveLevel(startState: State) -> list[Moves]:
 				heap.changedPriority(i)
 			else:
 				heap.push(newState)
-	return outMoves
+	return []
 
 def prepareLevel(tiles: Board, targets: list[Pos]) -> State:
 	tiles, targets = clipLevel(tiles, targets)
