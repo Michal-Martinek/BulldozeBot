@@ -1,29 +1,32 @@
 from collections import deque
 import numpy as np
 import cv2, time
-from Classes import Tiles, Moves, Pos, Heap
-
-Board = list[list[Tiles]]
-DistMap = list[list[int]]
-
-FLOAT_MAX_VAL = np.float32('inf')
+from Classes import *
 
 class State:
-	def __init__(self, rocks: set[Pos], bulldozerPos: Pos, moves: list[Moves], tiles: list[list[Tiles]], targets: set[Pos], forbidden: list[list[bool]], distMaps: list[DistMap]):
-		self.rocks = rocks
+	tiles: np.ndarray
+	targets: set[Pos]
+	forbidden: np.ndarray=None
+	distMaps: np.ndarray=None
+	
+	@classmethod
+	def globalInit(cls, rocks: set[Pos], bulldozerPos: Pos, tiles: Board, targets: set[Pos], forbidden: Board):
+		cls.tiles = tiles
+		cls.targets = targets
+		cls.forbidden = forbidden
+		return cls(rocks, bulldozerPos)
+
+	def __init__(self, rocks: set[Pos], bulldozerPos: Pos, moves: list[Moves]=[]):
+		self.rocks: set[Pos] = rocks
 		self.bulldozerPos = bulldozerPos
-		self.moves = moves
-		self.tiles = tiles
-		self.targets = targets
-		self.forbidden = forbidden
-		self.distMaps = distMaps
+		self.moves: list[Moves] = moves
 
 		self._hCost = -1
 		self._toppest = None
-	def levelWon(self):
-		return self.rocks ==  self.targets
+	def levelWon(self) -> bool:
+		return self.rocks == self.targets
 	def movedBulldozer(self, move: Moves):
-		return State(self.rocks.copy(), self.bulldozerPos.moved(move), self.moves + [move], self.tiles, self.targets, self.forbidden, self.distMaps)
+		return State(self.rocks.copy(), self.bulldozerPos + move, self.moves + [move])
 	def adjustMovedRock(self, newRockPos: Pos):
 		self.rocks.remove(self.bulldozerPos)
 		self.rocks.add(newRockPos)
@@ -32,6 +35,7 @@ class State:
 	def takeBetterFrom(self, other):
 		if len(self.moves) > len(other.moves): # TODO: the two states don't have to have the same bulldozer pos, so the moves couldn't be the same
 			self.moves = other.moves.copy()
+		raise NotImplementedError
 
 	def __hash__(self) -> int:
 		return hash((tuple(self.rocks), self.toppest))
@@ -45,26 +49,26 @@ class State:
 	def __eq__(self, other):
 		return self.rocks == other.rocks and self.toppest == other.toppest
 	def _getToppest(self) -> Pos:
-		toppest = Pos(len(self.tiles[0]), len(self.tiles))
+		toppest = Pos(self.tiles.shape)
 		closed = set((self.bulldozerPos, ))
 		opened = deque((self.bulldozerPos, ))
 		while opened:
 			curr = opened.popleft()
-			if curr.y < toppest.y or curr.y == toppest.y and curr.x < toppest.x:
+			if curr < toppest:
 				toppest = curr
-			for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
-				new = curr.moved(move)
-				if new.at(self.tiles) == Tiles.FREE and new not in self.rocks and new not in closed:
+			for move in Moves:
+				new = curr + move
+				if self.tiles[new] == Tiles.FREE and new not in self.rocks and new not in closed:
 					opened.append(new)
 					closed.add(new)
-		assert toppest.x < len(self.tiles[0]) and toppest.y < len(self.tiles)
+		assert toppest < self.tiles.shape
 		return toppest
 	
 	def calcHeuristic(self) -> bool:
 		table = np.zeros((len(self.rocks), len(self.targets)), dtype='float32')
 		for r, rock in enumerate(self.rocks):
 			for m, distMap in enumerate(self.distMaps):
-				cost = rock.at(distMap)
+				cost = distMap[rock]
 				if cost == -1: cost = np.float32('inf')
 				table[r, m] = cost
 		self._hCost = self._bestHeuristic(table)
@@ -73,12 +77,12 @@ class State:
 		if table.size == 1:
 			return table[0, 0]
 		for col in np.argsort(table[0]):
-			if table[0, col] == FLOAT_MAX_VAL: return FLOAT_MAX_VAL # there are only infs left
+			if table[0, col] == float('inf'): break # there are only infs left
 			otherColIdxs = np.delete(np.arange(table.shape[1]), col)
 			cost = self._bestHeuristic(table[1:, otherColIdxs])
-			if cost == FLOAT_MAX_VAL: continue
+			if cost == float('inf'): continue
 			return cost + table[0][col]
-		return FLOAT_MAX_VAL
+		return float('inf')
 
 	@ property
 	def toppest(self) -> Pos:
@@ -95,96 +99,50 @@ class State:
 		return 4 * self._hCost + len(self.moves)
 
 # preprocessing ----------------------------------
-def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, list[Pos]]:
-	assert len(tiles) > 0 and len(tiles[0]) > 0
-	offsets = [0, 0]
-	wallRows = [all([t == Tiles.WALL for t in row]) for row in tiles]
-	wallRow = [Tiles.WALL for _ in range(len(tiles[0]))]
-	if wallRows[0] is False: # top
-		tiles.insert(0, wallRow)
-		offsets[0] = 1
-	else:
-		first = wallRows.index(False)
-		tiles = tiles[first-1:]
-		offsets[0] = 1 - first
-	
-	if wallRows[-1] is False: # down
-		tiles.append(wallRow)
-	else:
-		last = wallRows[::-1].index(False)
-		if last > 1:
-			tiles = tiles[:1-last]
-	
-	wallCols = [all([tiles[y][x] == Tiles.WALL for y in range(len(tiles))]) for x in range(len(tiles[0]))]
-	if wallCols[0] is False: # left
-		tiles = [[Tiles.WALL] + row for row in tiles]
-		offsets[1] = 1
-	else:
-		first = wallCols.index(False)
-		tiles = [row[first-1:] for row in tiles]
-		offsets[1] = 1 - first
+def clipLevel(tiles: Board, targets: list[Pos]) -> tuple[Board, set[Pos]]:
+	assert tiles.size
+	tiles = np.pad(tiles, 1)
+	nonWalls = np.where(tiles != Tiles.WALL)
+	topleft = np.min(nonWalls, axis=1) - 1
+	tiles = tiles[   topleft[0] : np.max(nonWalls[0]) + 2]
+	tiles = tiles[:, topleft[1] : np.max(nonWalls[1]) + 2]
+	return tiles.copy(), set([(t - (topleft - 1)) for t in targets])
 
-	if wallCols[-1] is False: # right
-		tiles = [row + [Tiles.WALL] for row in tiles]
-	else:
-		last = wallCols[::-1].index(False)
-		if last > 1:
-			tiles = [row[:1-last] for row in tiles]
-	
-	return _copyTiles(tiles), set([Pos(t.x + offsets[1], t.y + offsets[0]) for t in targets])
-def checkLevel(tiles, targets, bulldozerPos, rocks):
-	assert 1 == sum([sum([t == Tiles.BULLDOZER for t in row]) for row in tiles]), 'exactly one bulldozer expected'
-	
-	if len(rocks) == len(targets) + 1:
-		targets.add(bulldozerPos)
-	assert len(rocks) == len(targets), 'number of rocks and targets doesn\'t match'
-	
-	assert all([(pos.at(tiles) != Tiles.WALL) for pos in targets]), 'targets may not be on walls'
-	
-	# walls around level
-	assert all([tiles[0][x] == Tiles.WALL and tiles[-1][x] == Tiles.WALL for x in range(len(tiles[0]))])
-	assert all([tiles[y][0] == Tiles.WALL and tiles[y][-1] == Tiles.WALL for y in range(len(tiles))])
-
-def _identifyCorners(tiles, targets) -> list[list[bool]]:
-	forbidden = [[False for x in range(len(tiles[0]))] for y in range(len(tiles))]
+def _identifyCorners(tiles, targets) -> np.ndarray:
+	forbidden = np.zeros_like(tiles, dtype='bool')
 	for curr in Pos.iterBoard(tiles):
-		walls = []
-		for i, move in enumerate([Moves.UP, Moves.RIGHT, Moves.DOWN, Moves.LEFT]):
-			pos = curr.moved(move)
-			if pos.at(tiles) == Tiles.WALL:
-				walls.append(i)
-		isCorner = any([(i in walls) and ((i+1)%4 in walls) for i in range(4)])
-		if curr not in targets and isCorner and curr.at(tiles) == Tiles.FREE:
-			forbidden[curr.y][curr.x] = True
+		if tiles[curr] != Tiles.FREE or curr in targets: continue
+		isWallAround = [tiles[curr + move] == Tiles.WALL for move in Moves]
+		for a, b in zip(isWallAround, isWallAround[1:] + [isWallAround[0]]):
+			if a and b:
+				forbidden[curr] = True
+				break
 	return forbidden
-def _extendWall(tiles, targets, pos: Pos, forbidden):
-	saved = pos
-	for xOff, yOff in [(0, 1), (1, 0)]:
-		pos = saved.copy()
+def _extendWall(tiles, targets, corner: Pos, forbidden):
+	for dir in [Pos(0, 1), Pos(1, 0)]:
+		pos = corner
 		foundTiles = []
 		started = True
 		wallTop, wallBottom = True, True
-		while pos.at(tiles) != Tiles.WALL and pos not in targets and (not pos.at(forbidden) or started) and (wallTop or wallBottom):
-			wallTop = wallTop and tiles[pos.y-xOff][pos.x-yOff] == Tiles.WALL
-			wallBottom = wallBottom and tiles[pos.y+xOff][pos.x+yOff] == Tiles.WALL
-			foundTiles.append(pos.copy())
-			pos.x += xOff
-			pos.y += yOff
+		while tiles[pos] != Tiles.WALL and pos not in targets and (not forbidden[pos] or started) and (wallTop or wallBottom):
+			wallTop = wallTop and tiles[pos - dir] == Tiles.WALL
+			wallBottom = wallBottom and tiles[pos + dir] == Tiles.WALL
+			foundTiles.append(pos)
+			pos += dir[::-1]
 			started = False
-		if pos.at(forbidden) and (wallTop or wallBottom):
-			for tx, ty in foundTiles:
-				forbidden[ty][tx] = True
-def getForbiddenTiles(tiles, targets) -> list[list[bool]]:
+		if forbidden[pos] and (wallTop or wallBottom):
+			for t in foundTiles:
+				forbidden[t] = True
+def getForbiddenTiles(tiles: Board, targets: set[Pos]) -> Board:
 	forbidden = _identifyCorners(tiles, targets)
-	corners = _copyTiles(forbidden)
-	for pos in Pos.iterBoard(tiles):
-		if pos.at(corners):
+	corners = forbidden.copy()
+	for pos in Pos.iterBoard(corners):
+		if corners[pos]:
 			_extendWall(tiles, targets, pos, forbidden)
 	return forbidden
-def _copyTiles(tiles: Board):
-	return [[t for t in row] for row in tiles]
 
 def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
+	# TODO call only for each target
 	openedH = Heap((0, target, tuple()))
 	closed: set[Pos] = set()
 	while openedH:
@@ -192,10 +150,10 @@ def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
 		if opened == startPos:
 			return dist
 		closed.add(opened)
-		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
-			pos = opened.moved(move)
-			far = pos.moved(move)
-			if pos in closed or pos.at(state.tiles) == Tiles.WALL or far.at(state.tiles) == Tiles.WALL:
+		for move in Moves:
+			pos = opened + move
+			far = pos + move
+			if pos in closed or state.tiles[pos] == Tiles.WALL or state.tiles[far] == Tiles.WALL:
 				continue
 			newDist = dist + 1 + 2 * (move not in prevMoves and len(prevMoves)) # TODO: if its around corner, we should check the len of the path
 			if openedH.hasKey(pos):
@@ -205,16 +163,16 @@ def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
 					openedH.decreasePriority(pos, newDist)
 			else:
 				openedH.push((newDist, pos, (move, )))
-	return -1
+	return float('inf')
 def computeDistMaps(state: State):
-	for target in state.targets:
-		dists = [[-1 for x in range(len(state.tiles[0]))] for y in range(len(state.tiles))]
+	State.distMaps = np.ndarray((len(state.targets), *state.tiles.shape), 'float32')
+	State.distMaps[:] = float('inf')
+	for targetIdx, target in enumerate(state.targets):
 		for pos in Pos.iterBoard(state.tiles):
-			if state.forbidden[pos.y][pos.x] or state.tiles[pos.y][pos.x] == Tiles.WALL:
+			if state.forbidden[pos] or state.tiles[pos] == Tiles.WALL:
 				continue
 			dist = _findDistToTarget(state, pos, target)
-			dists[pos.y][pos.x] = dist
-		state.distMaps.append(dists)
+			State.distMaps[targetIdx][pos] = dist
 
 # solving ---------------------------------------------
 lastWindowWait = 0.0
@@ -248,20 +206,26 @@ def solveLevel(startState: State, draw) -> list[Moves]:
 			else:
 				heap.push(newState)
 	return []
+def pullObjectsFromTiles(tiles: Board, targets: set[Pos]) -> tuple[Pos, set[Pos]]:
+	assert np.sum(tiles == Tiles.BULLDOZER) == 1, 'exactly one bulldozer expected'
+	bulldozerPos = Pos.getCoordsWhere(tiles == Tiles.BULLDOZER, onlyOne=True)
+	tiles[bulldozerPos] = Tiles.FREE
 
+	rocks = Pos.getCoordsWhere(tiles == Tiles.ROCK)
+	for rockPos in rocks:
+		tiles[rockPos] = Tiles.FREE
+
+	if len(rocks) == len(targets) + 1:
+		targets.add(bulldozerPos)
+	assert len(rocks) == len(targets), 'number of rocks and targets doesn\'t match'
+	return bulldozerPos, set(rocks)
 def prepareLevel(tiles: Board, targets: list[Pos]) -> State:
 	tiles, targets = clipLevel(tiles, targets)
-	bulldozerPos = Pos(*[[tiles[y].index(Tiles.BULLDOZER), y] for y in range(len(tiles)) if Tiles.BULLDOZER in tiles[y]][0])
-	rocks = set(sum([[Pos(x, y) for x, tile in enumerate(row) if tile == Tiles.ROCK] for y, row in enumerate(tiles)], start=[]))
-	checkLevel(tiles, targets, bulldozerPos, rocks)
+	bulldozerPos, rocks = pullObjectsFromTiles(tiles, targets)
 	
-	tiles[bulldozerPos.y][bulldozerPos.x] = Tiles.FREE
 	forbidden = getForbiddenTiles(tiles, targets)
-	state = State(rocks, bulldozerPos, [], tiles, targets, forbidden, [])
+	state = State.globalInit(rocks, bulldozerPos, tiles, targets, forbidden)
 	computeDistMaps(state)
-	for rx, ry in rocks:
-		state.tiles[ry][rx] = Tiles.FREE
-	assert len(state.distMaps) == len(state.targets)
 	return state
 
 def findPossibleRockMoves(state: State) -> list[State]:
@@ -270,15 +234,15 @@ def findPossibleRockMoves(state: State) -> list[State]:
 	newStates: list[State] = []
 	while opened:
 		s = opened.popleft()
-		for move in [Moves.UP, Moves.DOWN, Moves.RIGHT, Moves.LEFT]:
+		for move in Moves:
 			currS = s.movedBulldozer(move)
 			currPos = currS.bulldozerPos
 			if currS.bulldozerPos in currS.rocks:
-				newRockPos = currS.bulldozerPos.moved(move)
-				if newRockPos not in currS.rocks and newRockPos.at(state.tiles) == Tiles.FREE and not newRockPos.at(state.forbidden):
+				newRockPos = currS.bulldozerPos + move
+				if newRockPos not in currS.rocks and state.tiles[newRockPos] == Tiles.FREE and not state.forbidden[newRockPos]:
 					currS.adjustMovedRock(newRockPos)
 					newStates.append(currS)
-			elif currPos.at(state.tiles) == Tiles.FREE and currPos not in closed:
+			elif state.tiles[currPos] == Tiles.FREE and currPos not in closed:
 				opened.append(currS)
 				closed.add(currPos)
 	return newStates

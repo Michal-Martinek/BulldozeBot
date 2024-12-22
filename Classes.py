@@ -1,50 +1,62 @@
 import heapq
-from enum import IntEnum, auto
+from enum import IntEnum, Enum, auto
 from typing import Generic, TypeVar
-from dataclasses import dataclass
+import numpy as np
+import numpy.typing as npt
 
+TILES_TYPE = np.uint8
 class Tiles(IntEnum):
-	WALL = auto()
+	WALL = 0
 	FREE = auto()
 	ROCK = auto()
 	BULLDOZER = auto()
 
-class Moves: # 10 * (x off + 1) + (y off + 1)
-	UP = 10
-	DOWN = 12
-	RIGHT = 21
-	LEFT = 1
+Board = npt.NDArray
 
-BoardDtype = TypeVar('BoardDtype')
-@ dataclass
-class Pos:
-	x: int
-	y: int
+class Moves(Enum):
+	UP = auto()
+	RIGHT = auto()
+	DOWN = auto()
+	LEFT = auto()
 
-	def moved(self, move: Moves):
-		return Pos(self.x + (move // 10) - 1, self.y + (move %  10) - 1)
-	def move(self, move: Moves):
-		self.x += (move // 10) - 1
-		self.y += (move %  10) - 1
-	def copy(self):
-		return Pos(self.x, self.y)
-	def at(self, b: list[list[BoardDtype]]) -> BoardDtype:
-		return b[self.y][self.x]
-	def __hash__(self):
-		return hash((self.x, self.y))
-	def __iter__(self):
-		return iter((self.x, self.y))
-	@ classmethod
-	def iterBoard(cls, b: list[list], inner=True):
-		for y in range(inner, len(b)-inner):
-			for x in range(inner, len(b[0])-inner):
-				yield cls(x, y)
-	def __eq__(self, other):
-		return self.x == other.x and self.y == other.y
-	def __lt__(self, other):
-		return self.x < other.x and self.y < other.y
-	def __repr__(self):
-		return f'P({self.x},{self.y})'
+	def offset(self):
+		return (self == Moves.DOWN) - (self == Moves.UP), (self == Moves.RIGHT) - (self == Moves.LEFT)
+
+class Pos(tuple):
+	@classmethod
+	def _constructor(cls, y, x):
+		return super().__new__(cls, (int(y), int(x)))
+	def __new__(cls, y, x=None):
+		if x is not None:
+			y = (y, x)
+		assert len(y) == 2, 'Two dimensions expected for Pos'
+		return cls._constructor(*y)
+	
+	def __add__(self, other):
+		if isinstance(other, Moves):
+			other = other.offset()
+		assert len(other) == 2
+		return self._constructor(self[0] + other[0], self[1] + other[1])
+	def __sub__(self, other):
+		assert len(other) == 2
+		return self._constructor(self[0] - other[0], self[1] - other[1])
+	def __mul__(self, other):
+		assert isinstance(other, int)
+		return self._constructor(self[0] * other, self[1] * other)
+	
+	@classmethod
+	def iterBoard(cls, b: Board, inner=True):
+		for y in range(inner, b.shape[0] - inner):
+			for x in range(inner, b.shape[1] - inner):
+				yield cls(y, x)
+	@classmethod
+	def getCoordsWhere(cls, cond, onlyOne=False) -> list:
+		a = np.array(np.where(cond)).T
+		a = [cls(p) for p in a]
+		if onlyOne:
+			assert len(a) == 1
+			a = a[0]
+		return a
 
 T = TypeVar('T')
 class Heap(Generic[T]):

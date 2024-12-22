@@ -6,7 +6,7 @@ import subprocess
 
 import BotLogic
 from BotLogic import State
-from Classes import Tiles, Moves, Pos
+from Classes import *
 
 os.chdir(os.path.dirname(__file__))
 
@@ -82,7 +82,7 @@ templates = {
 		for file in os.listdir('Templates')
 }
 # drawing -----------------------------------
-def blit(img, src, x_offset: int, y_offset: int):
+def blit(img, src, y_offset: int, x_offset: int):
 	img[y_offset:y_offset+src.shape[0], x_offset:x_offset+src.shape[1]] = src
 def drawHollowRect(img, color, x, y, w, h, thickness=2):
 	img[y:y+thickness, x:x+w] = color
@@ -93,8 +93,8 @@ def boxLocations(img, locs, templShape, color):
 	for y, x in zip(*locs):
 			cv2.rectangle(img, (x, y), (x + templShape[0], y + templShape[1]), color, 2, cv2.LINE_4)
 def drawGridlines(img):
-	img[0:img.shape[0]:TILESIZE] = (0, 0, 0)
-	img[:, 0:img.shape[1]:TILESIZE] = (0, 0, 0)
+	img[::TILESIZE] = (0, 0, 0)
+	img[:, ::TILESIZE] = (0, 0, 0)
 def _getImg(tile: Tiles, isTarget: bool, forbidden: bool):
 	tileName = {Tiles.FREE: ['Free', 'Free-forbidden'][forbidden],	Tiles.BULLDOZER: ['Bulldozer-up', 'Bulldozer-forbidden'][forbidden], Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
 	if isTarget:
@@ -107,23 +107,23 @@ def _getImg(tile: Tiles, isTarget: bool, forbidden: bool):
 def drawDetectedLevel(state: State):
 	img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
 	for pos in Pos.iterBoard(state.tiles, inner=False):
-		tile = state.tiles[pos.y][pos.x]
+		tile = state.tiles[pos]
 		if pos == state.bulldozerPos:
 			tile = Tiles.BULLDOZER
 		if pos in state.rocks:
 			tile = Tiles.ROCK
-		template = _getImg(tile, pos in state.targets, state.forbidden[pos.y][pos.x])
-		blit(img, template, pos.x * TILESIZE, pos.y * TILESIZE)
+		template = _getImg(tile, pos in state.targets, bool(state.forbidden[pos]))
+		blit(img, template, *pos * TILESIZE)
 	return img
 # object detection --------------------------------------
-def clipScreenshot(img):
+def clipScreenshot(img) -> tuple[np.ndarray, tuple[int, int]]:
 	matched = cv2.matchTemplate(img, templates['Rock'], cv2.TM_CCOEFF_NORMED)
 	posses = np.array( np.where(matched > 0.90) )
 	assert posses.size, 'Could not find any rocks, the level is probably solved'
 	minPos = np.min(posses, axis=1) % TILESIZE
 	img = img[minPos[0]:, minPos[1]:]
 	height, width = img.shape[0] // TILESIZE, img.shape[1] // TILESIZE
-	return img[:height * TILESIZE, :width * TILESIZE].copy(), (height, width)
+	return img[:height * TILESIZE, :width * TILESIZE], (height, width)
 def getBestMatch(img) -> str:
 	bestMatch = 'Free'
 	bestVal = 0.0
@@ -150,16 +150,16 @@ def matchBlock(img) -> tuple[Tiles, bool]:
 		matched = Tiles.WALL
 	return matched, matchName in ['RockOnTarget', 'Target']
 	
-def detectLevel(img: np.ndarray, height, width) -> tuple[list[list[Tiles]], list[Pos]]:
+def detectLevel(img: np.ndarray, height, width) -> tuple[Board, list[Pos]]:
 	blocks = img.reshape((height, TILESIZE, width, TILESIZE, 3))
-	tiles, targets = [], []
+	tiles: Board = np.zeros((height, width), dtype=TILES_TYPE)
+	targets = []
 	for y in range(height):
-		tiles.append([])
 		for x in range(width):
 			tile, target = matchBlock(blocks[y, :, x])
-			tiles[-1].append(tile)
+			tiles[y, x] = tile
 			if target:
-				targets.append(Pos(x, y))
+				targets.append(Pos(y, x))
 	return tiles, targets
 
 # executing moves ------------------------------------
@@ -184,7 +184,7 @@ def main():
 	cv2.imshow('BulldozeBot', img)
 	cv2.waitKey(1)
 	
-	moves = BotLogic.solveLevel(state)
+	moves = BotLogic.solveLevel(state, drawDetectedLevel)
 	print(f'INFO: found a solution with {len(moves)} moves')
 	executeMoves(moves, hwnd)
 
