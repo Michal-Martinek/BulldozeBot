@@ -68,7 +68,6 @@ class State:
 		for r, rock in enumerate(self.rocks):
 			for m, distMap in enumerate(self.distMaps):
 				cost = distMap[rock]
-				if cost == -1: cost = np.float32('inf')
 				table[r, m] = cost
 		self._hCost = self._bestHeuristic(table)
 		return self._hCost != np.float32('inf')
@@ -154,7 +153,7 @@ def _findDistToTarget(state: State, startPos: Pos, target: Pos) -> int:
 			far = pos + move
 			if pos in closed or state.tiles[pos] == Tiles.WALL or state.tiles[far] == Tiles.WALL:
 				continue
-			newDist = dist + 1 + 2 * (move not in prevMoves and len(prevMoves)) # TODO: if its around corner, we should check the len of the path
+			newDist = dist + 1 + 2 * (move not in prevMoves and len(prevMoves))
 			if openedH.hasKey(pos):
 				i = openedH.index(pos)
 				openedH.changeMetadata(i, (openedH.heap[i][2] + (move,),))

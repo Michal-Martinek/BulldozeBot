@@ -154,6 +154,7 @@ class GUI:
 	def init(self):
 		self.hwnd: int = -1
 		self.repeat = False
+		self.pause = False
 		self.comms = Comms()
 		self.solveThread: threading.Thread = None
 	def stop(self):
@@ -165,12 +166,13 @@ class GUI:
 		if self.solveThread.is_alive():
 			print('ERROR: closing SolveThread timed out, exiting')
 			os.kill(os.getpid(), signal.SIGTERM)
-	def close(self):
+	def close(self, window=True):
 		assert self.comms.stopEvent.is_set()
-		try:
-			cv2.destroyWindow(self.windowName)
-		except cv2.error:
-			pass
+		if window:
+			try:
+				cv2.destroyWindow(self.windowName)
+			except cv2.error:
+				pass
 		self.joinThread()
 
 	# drawing ----------------------------------------
@@ -216,10 +218,16 @@ class GUI:
 	def checkDisplay(self, wait_ms=20) -> bool:
 		key = cv2.waitKey(wait_ms)
 		if cv2.getWindowProperty(self.windowName, cv2.WND_PROP_VISIBLE) < 1:
-			return self.stop()
-		if key in map(ord, 'qr\x1b'):
+			key = ord('q')
+		if key in [ord('q'), ord('r'), 27, ord(' ')]:
+			self.repeat = False
+			self.pause = False
 			if key == ord('r'):
 				self.repeat = True
+			if key == ord(' '):
+				self.repeat = True
+				self.pause = True
+				print('PAUSED')
 			return self.stop()
 		return True
 	def redrawDisplay(self):
@@ -274,6 +282,11 @@ class GUI:
 			self.init()
 			state = self.readGameInput()
 			self.solveAndExecute(state)
+			if self.pause:
+				self.close(window=False)
+				self.comms.stopEvent.clear()
+				self.redrawDisplay()
+				self.waitInLoop(solving=False)
 		self.close()
 
 def main():
