@@ -224,11 +224,14 @@ class GUI:
 			self.pause = False
 			if key == ord('r'):
 				self.repeat = True
-			if key == ord(' '):
+			elif key == ord(' '):
 				self.repeat = True
 				self.pause = True
 				print('PAUSED')
 			return self.stop()
+		elif key != -1:
+			win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNORMAL)
+			win32gui.SetForegroundWindow(self.hwnd)
 		return True
 	def redrawDisplay(self):
 		if (state := self.getNewestState()) is None: return
