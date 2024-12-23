@@ -1,4 +1,6 @@
 import heapq
+import threading, queue
+
 from enum import IntEnum, Enum, auto
 from typing import Generic, TypeVar
 import numpy as np
@@ -57,6 +59,14 @@ class Pos(tuple):
 			assert len(a) == 1
 			a = a[0]
 		return a
+
+class Comms:
+	"""class for inter-Thread communication between Main and Solve threads"""
+	def __init__(self):
+		self.stateQueue = queue.Queue()
+		self.doneEvent = threading.Event()
+		self.stopEvent = threading.Event()
+		self.movesQueue: queue.Queue[list[Moves]] = queue.Queue()
 
 T = TypeVar('T')
 class Heap(Generic[T]):

@@ -1,6 +1,5 @@
 from collections import deque
 import numpy as np
-import cv2, time
 from Classes import *
 
 class State:
@@ -175,28 +174,26 @@ def computeDistMaps(state: State):
 			State.distMaps[targetIdx][pos] = dist
 
 # solving ---------------------------------------------
-lastWindowWait = 0.0
-def solveLevel(startState: State, draw) -> list[Moves]:
+def communicateSolving(comms: Comms, state: State, *, endSolving=False):
+	"""@return whether solving should end"""
+	if comms.stopEvent.is_set():
+		return True
+	comms.stateQueue.put(state)
+	if endSolving or state.levelWon():
+		moves = [] if endSolving else state.moves
+		comms.movesQueue.put(moves)
+		comms.doneEvent.set()
+		comms.stateQueue.put(state)
+		return True
+
+def solveLevel(state: State, comms: Comms):
 	closed: set[State] = set()
-	heap = Heap(startState)
-	lastWindowWait = 0.0
+	heap = Heap(state)
 	while heap:
 		state = heap.pop()
 		closed.add(state)
-
-		img = draw(state)
-		cv2.imshow('BulldozeBot', img)
-		if (t := time.time()) - lastWindowWait > 0.1: # TODO: move solving to another thread than window stuff
-			lastWindowWait = t
-			key = cv2.waitKey(1)
-			if key == 32:
-				print('PAUSED')
-				return []
-			if key == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-				exit(0)
-
-		if state.levelWon():
-			return state.moves
+		if communicateSolving(comms, state):
+			return
 		for newState in findPossibleRockMoves(state):
 			if newState in closed: continue
 			if heap.hasItem(newState):
@@ -205,7 +202,7 @@ def solveLevel(startState: State, draw) -> list[Moves]:
 				heap.changedPriority(i)
 			else:
 				heap.push(newState)
-	return []
+	communicateSolving(comms, state, endSolving=True)
 def pullObjectsFromTiles(tiles: Board, targets: set[Pos]) -> tuple[Pos, set[Pos]]:
 	assert np.sum(tiles == Tiles.BULLDOZER) == 1, 'exactly one bulldozer expected'
 	bulldozerPos = Pos.getCoordsWhere(tiles == Tiles.BULLDOZER, onlyOne=True)

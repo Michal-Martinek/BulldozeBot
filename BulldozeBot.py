@@ -2,13 +2,17 @@ import win32gui, win32ui, win32con
 import numpy as np
 import cv2
 import re, os
+
 import subprocess
+import threading
+import queue
+import signal
+
+os.chdir(os.path.dirname(__file__))
 
 import BotLogic
 from BotLogic import State
-from Classes import *
-
-os.chdir(os.path.dirname(__file__))
+from Classes import Pos, Tiles, Board, TILES_TYPE, Moves, Comms
 
 # window capture ---------------------------------
 def startBuldozeExe():
@@ -95,26 +99,7 @@ def boxLocations(img, locs, templShape, color):
 def drawGridlines(img):
 	img[::TILESIZE] = (0, 0, 0)
 	img[:, ::TILESIZE] = (0, 0, 0)
-def _getImg(tile: Tiles, isTarget: bool, forbidden: bool):
-	tileName = {Tiles.FREE: ['Free', 'Free-forbidden'][forbidden],	Tiles.BULLDOZER: ['Bulldozer-up', 'Bulldozer-forbidden'][forbidden], Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
-	if isTarget:
-		if tile == Tiles.BULLDOZER:
-			tileName = 'Bulldozer-target'
-		elif tile == Tiles.ROCK:
-			tileName = 'RockOnTarget'
-		else: tileName = 'Target'
-	return templates[tileName]
-def drawDetectedLevel(state: State):
-	img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
-	for pos in Pos.iterBoard(state.tiles, inner=False):
-		tile = state.tiles[pos]
-		if pos == state.bulldozerPos:
-			tile = Tiles.BULLDOZER
-		if pos in state.rocks:
-			tile = Tiles.ROCK
-		template = _getImg(tile, pos in state.targets, bool(state.forbidden[pos]))
-		blit(img, template, *pos * TILESIZE)
-	return img
+
 # object detection --------------------------------------
 def clipScreenshot(img) -> tuple[np.ndarray, tuple[int, int]]:
 	matched = cv2.matchTemplate(img, templates['Rock'], cv2.TM_CCOEFF_NORMED)
@@ -162,44 +147,138 @@ def detectLevel(img: np.ndarray, height, width) -> tuple[Board, list[Pos]]:
 				targets.append(Pos(y, x))
 	return tiles, targets
 
-# executing moves ------------------------------------
-def executeMoves(moves: list[Moves], hwnd, duration=20):
-	mapp = {Moves.UP: 'W', Moves.DOWN: 'S', Moves.RIGHT: 'D', Moves.LEFT: 'A'}
-	for move in [ord(mapp[m]) for m in moves]:
-		win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, move, 0)
-		if cv2.waitKey(duration) == ord('q') or cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-			return
-		win32gui.SendMessage(hwnd, win32con.WM_KEYUP, move, 0)
+class GUI:
+	def __init__(self, windowName):
+		self.windowName = windowName
+		self.repeat = True
+	def init(self):
+		self.hwnd: int = -1
+		self.repeat = False
+		self.comms = Comms()
+		self.solveThread: threading.Thread = None
+	def stop(self):
+		self.comms.stopEvent.set()
+		return False
+	def joinThread(self):
+		assert self.comms.stopEvent.is_set()
+		self.solveThread.join(1)
+		if self.solveThread.is_alive():
+			print('ERROR: closing SolveThread timed out, exiting')
+			os.kill(os.getpid(), signal.SIGTERM)
+	def close(self):
+		assert self.comms.stopEvent.is_set()
+		try:
+			cv2.destroyWindow(self.windowName)
+		except cv2.error:
+			pass
+		self.joinThread()
 
-# run
-def main():
-	hwnd = findBulldozerWindow()
-	img = getScreenshot(hwnd)
+	# drawing ----------------------------------------
+	@staticmethod
+	def getTemplateName(tile: Tiles, isTarget: bool, forbidden: bool):
+		tileName = {Tiles.FREE: ['Free', 'Free-forbidden'][forbidden],	Tiles.BULLDOZER: ['Bulldozer-up', 'Bulldozer-forbidden'][forbidden], Tiles.ROCK: 'Rock', Tiles.WALL: 'Wall'}[tile]
+		if isTarget:
+			if tile == Tiles.BULLDOZER:
+				tileName = 'Bulldozer-target'
+			elif tile == Tiles.ROCK:
+				tileName = 'RockOnTarget'
+			else: tileName = 'Target'
+		return tileName
+	def getTemplateImg(self, pos: Pos, state):
+		tile = state.tiles[pos]
+		if pos == state.bulldozerPos:
+			tile = Tiles.BULLDOZER
+		if pos in state.rocks:
+			tile = Tiles.ROCK
+		name = self.getTemplateName(tile, pos in state.targets, bool(state.forbidden[pos]))
+		return templates[name]
+	def drawTiles(self, state: State):
+		img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
+		for pos in Pos.iterBoard(state.tiles, inner=False):
+			template = self.getTemplateImg(pos, state)
+			blit(img, template, *pos * TILESIZE)
+		return img
+	def drawState(self, state):
+		return self.drawTiles(state)
+
+	# ---------------------------------------------
+	def getNewestState(self):
+		state = None
+		while True:
+			try:
+				state = self.comms.stateQueue.get_nowait()
+			except queue.Empty:
+				return state
 	
-	img, dims = clipScreenshot(img)
-	tiles, targets = detectLevel(img, *dims)
-	state = BotLogic.prepareLevel(tiles, targets)
-
-	img = drawDetectedLevel(state)
-	cv2.imshow('BulldozeBot', img)
-	cv2.waitKey(1)
+	def advanceLevel():
+		raise NotImplementedError
 	
-	moves = BotLogic.solveLevel(state, drawDetectedLevel)
-	print(f'INFO: found a solution with {len(moves)} moves')
-	executeMoves(moves, hwnd)
-
-	retry = False
-	while True:
-		if cv2.getWindowProperty('BulldozeBot', cv2.WND_PROP_VISIBLE) < 1:
-			break
-		if (key := cv2.waitKey(1)) in [ord('q'), ord('r')]:
+	def checkDisplay(self, wait_ms=20) -> bool:
+		key = cv2.waitKey(wait_ms)
+		if cv2.getWindowProperty(self.windowName, cv2.WND_PROP_VISIBLE) < 1:
+			return self.stop()
+		if key in map(ord, 'qr\x1b'):
 			if key == ord('r'):
-				retry = True
-			break
+				self.repeat = True
+			return self.stop()
+		return True
+	def redrawDisplay(self):
+		if (state := self.getNewestState()) is None: return
+		img = self.drawState(state)
+		cv2.imshow(self.windowName, img)
+	def checkSolveThread(self):
+		if not self.solveThread.is_alive():
+			return self.stop()
+		if self.comms.doneEvent.is_set():
+			self.comms.stopEvent.set()
+			self.joinThread()
+	
+	# loops ---------------------------------------------
+	def executeMovesLoop(self, moves: list[Moves], dontFinish=False):
+		assert not self.comms.stopEvent.is_set()
+		mapp = {Moves.UP: 'W', Moves.DOWN: 'S', Moves.RIGHT: 'D', Moves.LEFT: 'A'}
+		if dontFinish: moves = moves[:-1]
+		for move in [ord(mapp[m]) for m in moves]:
+			win32gui.PostMessage(self.hwnd, win32con.WM_KEYDOWN, move, 0)
+			if not self.checkDisplay():
+				return
+			win32gui.SendMessage(self.hwnd, win32con.WM_KEYUP, move, 0)
+	def waitInLoop(self, solving: bool):
+		while not self.comms.stopEvent.is_set():
+			if (solving):
+				self.redrawDisplay()
+				self.checkSolveThread()
+			self.checkDisplay()
+	def solveAndExecute(self, startState):
+		self.solveThread = threading.Thread(target=BotLogic.solveLevel, args=(startState, self.comms), name='SolveThread')
+		self.solveThread.start()
+		self.waitInLoop(solving=True)
+		if self.comms.doneEvent.is_set():
+			moves = self.comms.movesQueue.get_nowait()
+			self.comms.stopEvent.clear()
+			self.redrawDisplay()
+			print(f'INFO: found a solution with {len(moves)} moves')
+			self.executeMovesLoop(moves)
+			self.waitInLoop(solving=False)
+		
+	def readGameInput(self) -> State:
+		self.hwnd = findBulldozerWindow()
+		img = getScreenshot(self.hwnd)
+		
+		img, dims = clipScreenshot(img)
+		tiles, targets = detectLevel(img, *dims)
+		state = BotLogic.prepareLevel(tiles, targets)
+		return state
+	def mainLoop(self):
+		while self.repeat:
+			self.init()
+			state = self.readGameInput()
+			self.solveAndExecute(state)
+		self.close()
 
-	cv2.destroyAllWindows()
-	return retry
-
+def main():
+	gui = GUI('Bulldozer Bot')
+	gui.mainLoop()
+	
 if __name__ == '__main__':
-	while main():
-		pass
+	main()
