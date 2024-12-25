@@ -101,10 +101,13 @@ def drawGridlines(img):
 	img[:, ::TILESIZE] = (0, 0, 0)
 
 # object detection --------------------------------------
+class NoRocksFound(RuntimeError):
+	pass
 def clipScreenshot(img) -> tuple[np.ndarray, tuple[int, int]]:
 	matched = cv2.matchTemplate(img, templates['Rock'], cv2.TM_CCOEFF_NORMED)
 	posses = np.array( np.where(matched > 0.90) )
-	assert posses.size, 'Could not find any rocks, the level is probably solved'
+	if not posses.size:
+		raise NoRocksFound('Could not find any rocks, the level is probably solved')
 	minPos = np.min(posses, axis=1) % TILESIZE
 	img = img[minPos[0]:, minPos[1]:]
 	height, width = img.shape[0] // TILESIZE, img.shape[1] // TILESIZE
@@ -192,7 +195,7 @@ class GUI:
 			tile = Tiles.BULLDOZER
 		if pos in state.rocks:
 			tile = Tiles.ROCK
-		name = self.getTemplateName(tile, pos in state.targets, bool(state.forbidden[pos]))
+		name = self.getTemplateName(tile, pos in state.targets, state.isForbidden(pos))
 		return templates[name]
 	def drawTiles(self, state: State):
 		img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
@@ -212,7 +215,7 @@ class GUI:
 			except queue.Empty:
 				return state
 	
-	def advanceLevel():
+	def advanceLevel(self):
 		raise NotImplementedError
 	
 	def checkDisplay(self, wait_ms=20) -> bool:
@@ -271,12 +274,17 @@ class GUI:
 			print(f'INFO: found a solution with {len(moves)} moves')
 			self.executeMovesLoop(moves)
 			self.waitInLoop(solving=False)
-		
-	def readGameInput(self) -> State:
+
+	def readGameInput(self, levelAlreadyAdvanced=False) -> State:
 		self.hwnd = findBulldozerWindow()
 		img = getScreenshot(self.hwnd)
 		
-		img, dims = clipScreenshot(img)
+		try:
+			img, dims = clipScreenshot(img)
+		except NoRocksFound as e:
+			if levelAlreadyAdvanced: raise e from None
+			self.advanceLevel()
+			return self.readGameInput(True)
 		tiles, targets = detectLevel(img, *dims)
 		state = BotLogic.prepareLevel(tiles, targets)
 		return state
