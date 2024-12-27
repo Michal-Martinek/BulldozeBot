@@ -23,6 +23,9 @@ class Moves(Enum):
 
 	def offset(self):
 		return (self == Moves.DOWN) - (self == Moves.UP), (self == Moves.RIGHT) - (self == Moves.LEFT)
+	def orthogonalMoves(self) -> tuple:
+		horizontal = (Moves.LEFT, Moves.RIGHT)
+		return (Moves.UP, Moves.DOWN) if self in horizontal else horizontal
 
 class Pos(tuple):
 	@classmethod
@@ -47,9 +50,17 @@ class Pos(tuple):
 		return self._constructor(self[0] * other, self[1] * other)
 	
 	@classmethod
-	def iterBoard(cls, b: Board, inner=True):
-		for y in range(inner, b.shape[0] - inner):
-			for x in range(inner, b.shape[1] - inner):
+	def iterBoard(cls, b: Board, excludeOutmost=True):
+		for y in range(excludeOutmost, b.shape[0] - excludeOutmost):
+			for x in range(excludeOutmost, b.shape[1] - excludeOutmost):
+				yield cls(y, x)
+	@classmethod
+	def iter3by3(cls, center, *, includeCenter=False, crossOnly=False):
+		for y in range(center[0] - 1, center[0] + 2):
+			for x in range(center[1] - 1, center[1] + 2):
+				pos = cls(y, x)
+				if crossOnly and y != center[0] and x != center[1]: continue
+				if not includeCenter and pos == center: continue
 				yield cls(y, x)
 	@classmethod
 	def getCoordsWhere(cls, cond, onlyOne=False) -> list:

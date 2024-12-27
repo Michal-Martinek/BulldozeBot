@@ -199,7 +199,7 @@ class GUI:
 		return templates[name]
 	def drawTiles(self, state: State):
 		img = np.zeros((len(state.tiles) * TILESIZE, len(state.tiles[0]) * TILESIZE, 3), dtype='uint8')
-		for pos in Pos.iterBoard(state.tiles, inner=False):
+		for pos in Pos.iterBoard(state.tiles, excludeOutmost=False):
 			template = self.getTemplateImg(pos, state)
 			blit(img, template, *pos * TILESIZE)
 		return img
