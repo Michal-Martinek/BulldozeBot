@@ -107,19 +107,21 @@ class State:
 			newRockPos = rockPos + moves[-1]
 			if newRockPos not in self.rocks and self.tiles[newRockPos] == Tiles.FREE:
 				state = State.afterRockMove(self, moves, rockPos, newRockPos)
-				if state.hasBlockedRocks(newRockPos):
+				if not state.checkNotBlocked(newRockPos):
 					continue
 				yield state
-	def hasBlockedRocks(self, rockPos: Pos) -> bool:
-		if rockPos in self.targets: return False
-		for neighborRock in Pos.iter3by3(rockPos, crossOnly=True):
-			if neighborRock not in self.rocks: continue
-			orthogonalMove = Pos((rockPos - neighborRock)[::-1])
-			for sideStep in (orthogonalMove, orthogonalMove * -1):
-				posesAlong = rockPos + sideStep, neighborRock + sideStep
-				blockedAlong = [(self.tiles[a] == Tiles.WALL or a in self.rocks) for a in posesAlong]
-				if all(blockedAlong): return True
-
+	def checkNotBlocked(self, rockPos: Pos, blockedRocks=set()) -> bool:
+		if rockPos in self.targets: return True
+		for pos1, pos2 in Pos.getPairsAlong(rockPos):
+			if Tiles.WALL in [self[pos1], self[pos2]]: continue
+			for side in (pos1, pos2):
+				if self.isAt(side, Tiles.WALL) or self.isForbidden(side): break
+				if side in self.rocks:
+					if side in blockedRocks: break
+					if not self.checkNotBlocked(side, blockedRocks.union({side})): break
+			else:
+				return True
+		return False
 	# heuristics --------------------------------------------
 	def calcPairingEstimate(self) -> float:
 		'''calculates heuristic by deciding final target for each rock
