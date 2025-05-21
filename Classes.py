@@ -2,7 +2,7 @@ import heapq
 import threading, queue
 
 from enum import IntEnum, Enum, auto
-from typing import Generic, TypeVar
+from typing import Generator, Generic, TypeVar
 import numpy as np
 import numpy.typing as npt
 
@@ -62,6 +62,10 @@ class Pos(tuple):
 				if crossOnly and y != center[0] and x != center[1]: continue
 				if not includeCenter and pos == center: continue
 				yield cls(y, x)
+	@classmethod
+	def getPairsAlong(cls, center) -> Generator[tuple]:
+		yield (center + Moves.UP, center + Moves.DOWN)
+		yield (center + Moves.LEFT, center + Moves.RIGHT)
 	@classmethod
 	def getCoordsWhere(cls, cond, onlyOne=False) -> list:
 		a = np.array(np.where(cond)).T

@@ -46,8 +46,12 @@ class State:
 					continue
 				dist = findDistToTarget(cls.tiles, pos, target)
 				cls.distMaps[targetIdx][pos] = dist
+	def __getitem__(self, pos: Pos):
+		return self.tiles[pos]
 	def isForbidden(self, pos: Pos):
 		return bool( np.all(self.distMaps[:, *pos] == float('inf')) )
+	def isAt(self, pos, tile: Tiles, checkRock=False):
+		return self.tiles[pos] == tile and not (checkRock and pos in self.rocks)
 	def levelWon(self) -> bool:
 		return self.rocks == self.targets
 	@property
@@ -58,9 +62,11 @@ class State:
 		return cost
 
 	def takeBetterFrom(self, other):
-		if len(self.moves) > len(other.moves): # TODO: the two states don't have to have the same bulldozer pos, so the moves couldn't be the same
-			self.moves = other.moves.copy()
-		raise NotImplementedError
+		if len(self.moves) > len(other.moves):
+			# findDistToTarget(self.tiles, self.bulldozerPos, )
+			# NOTE: update only if states have same bulldozer pos
+			if self.bulldozerPos == other.bulldozerPos:
+				self.moves = other.moves.copy()
 
 	def __hash__(self) -> int:
 		return hash((tuple(self.rocks), self.chamberTop))
